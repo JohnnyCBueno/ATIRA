@@ -1,0 +1,52 @@
+{
+  "name": "atira",
+  "productName": "ATIRA",
+  "version": "1.0.1",
+  "description": "A private, passive life timeline and personal analytics companion.",
+  "author": "ATIRA",
+  "main": "index.ts",
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.6",
+    "expo": "~57.0.7",
+    "expo-crypto": "~57.0.1",
+    "expo-dev-client": "~57.0.7",
+    "expo-location": "~57.0.5",
+    "expo-secure-store": "~57.0.1",
+    "expo-sqlite": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "expo-task-manager": "~57.0.5",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@types/react": "~19.2.2",
+    "concurrently": "^10.0.3",
+    "electron": "^43.1.1",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.0.10"
+  },
+  "scripts": {
+    "start": "expo start",
+    "start:dev-client": "expo start --dev-client",
+    "desktop:collector": "node desktop/collector/collector.mjs",
+    "desktop:collector:test": "node --test desktop/app/squirrel-events.test.mjs desktop/collector/sessionizer.test.mjs desktop/connectors/huawei-health/huawei-health.test.mjs",
+    "desktop:app:dev": "concurrently --kill-others \"npm run web\" \"wait-on http://localhost:8081 && electron desktop/app/main.mjs --dev\"",
+    "desktop:app:package": "npm run export:web && electron-forge package",
+    "desktop:app:make": "npm run export:web && electron-forge make",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "export:web": "expo export --platform web",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --dir src && npm run desktop:collector:test",
+    "check": "npm run typecheck && npm test"
+  },
+  "private": true
+}
