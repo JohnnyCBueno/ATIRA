@@ -23,6 +23,10 @@ The user should feel:
 - **Interpretation:** likely work mode, exercise, commute, sleep, learning, social time, and recovery.
 - **Reflection:** changes, routines, correlations, and Wrapped-style summaries.
 
+## Presentation rule
+
+Raw observations, aggregate audits, and meaningful life events are separate product objects. Location supplies the primary chronology. Repeated digital activity is aggregated by application and time, while idle states and short switches remain evidence unless another source makes them meaningful.
+
 ## Non-negotiables
 
 - A useful day must exist without manual logging.

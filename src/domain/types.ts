@@ -51,6 +51,45 @@ export interface TimelineEvent {
   alternatives: string[];
 }
 
+export type DigitalActivityCategory =
+  | 'creation'
+  | 'communication'
+  | 'learning'
+  | 'entertainment'
+  | 'browser'
+  | 'ai_assistance'
+  | 'other';
+
+export interface DesktopUsageSession {
+  id: string;
+  applicationId: string;
+  applicationName: string;
+  category: DigitalActivityCategory;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+}
+
+export interface DesktopUsageApplication {
+  applicationId: string;
+  applicationName: string;
+  category: DigitalActivityCategory;
+  durationSeconds: number;
+  sessions: DesktopUsageSession[];
+}
+
+export interface DesktopUsageHour {
+  hour: number;
+  totalSeconds: number;
+  categories: { category: DigitalActivityCategory; durationSeconds: number }[];
+}
+
+export interface DesktopUsageSummary {
+  totalSeconds: number;
+  applications: DesktopUsageApplication[];
+  hours: DesktopUsageHour[];
+}
+
 export interface DayPlace {
   id: string;
   title: string;
@@ -76,6 +115,7 @@ export interface DayRecord {
   inferredRoutePath?: string;
   places: DayPlace[];
   events: TimelineEvent[];
+  desktopUsage?: DesktopUsageSummary;
 }
 
 export interface CapabilityItem {

@@ -34,13 +34,42 @@ describe('desktop activity reconstruction', () => {
     expect(day.work).toBe('0m');
   });
 
-  it('drops tiny idle noise but keeps a meaningful break', () => {
+  it('keeps idle and locked observations as raw evidence instead of life events', () => {
     const result = reconstructDesktopActivity([
-      observation('tiny-idle', null, '2026-07-21T12:00:00.000Z', '2026-07-21T12:00:20.000Z', 'idle'),
+      observation('active', 'ChatGPT', '2026-07-21T11:40:00.000Z', '2026-07-21T11:50:00.000Z'),
       observation('break', null, '2026-07-21T12:01:00.000Z', '2026-07-21T12:11:00.000Z', 'idle'),
+      observation('locked', null, '2026-07-21T12:11:00.000Z', '2026-07-21T12:21:00.000Z', 'locked'),
     ])[0];
     expect(result.blocks).toHaveLength(1);
-    expect(result.blocks[0].kind).toBe('idle');
+    expect(result.blocks[0].kind).toBe('ai_assistance');
+    expect(result.usage.totalSeconds).toBe(600);
+  });
+
+  it('suppresses sub-minute switches and ATIRA implementation processes', () => {
+    const result = reconstructDesktopActivity([
+      observation('tiny', 'ChatGPT', '2026-07-21T12:00:00.000Z', '2026-07-21T12:00:40.000Z'),
+      observation('electron', 'electron', '2026-07-21T12:01:00.000Z', '2026-07-21T12:11:00.000Z'),
+      observation('atira', 'ATIRA', '2026-07-21T12:11:00.000Z', '2026-07-21T12:21:00.000Z'),
+      observation('browser', 'chrome', '2026-07-21T12:21:00.000Z', '2026-07-21T12:26:00.000Z'),
+    ])[0];
+    expect(result.usage.applications).toHaveLength(1);
+    expect(result.usage.applications[0]).toMatchObject({ applicationName: 'Google Chrome', durationSeconds: 300 });
+    expect(result.blocks).toHaveLength(1);
+  });
+
+  it('aggregates repeated sessions by application and retains drill-down times', () => {
+    const firstStart = '2026-07-21T09:00:00.000Z';
+    const secondStart = '2026-07-21T14:00:00.000Z';
+    const result = reconstructDesktopActivity([
+      observation('chat-morning', 'ChatGPT', firstStart, '2026-07-21T09:10:00.000Z'),
+      observation('chat-afternoon', 'ChatGPT', secondStart, '2026-07-21T14:15:00.000Z'),
+    ])[0];
+    const chat = result.usage.applications[0];
+    expect(chat).toMatchObject({ applicationName: 'ChatGPT', durationSeconds: 1500 });
+    expect(chat.sessions).toHaveLength(2);
+    expect(result.usage.totalSeconds).toBe(1500);
+    expect(result.usage.hours[new Date(firstStart).getHours()].totalSeconds).toBe(600);
+    expect(result.usage.hours[new Date(secondStart).getHours()].totalSeconds).toBe(900);
   });
 
   it('preserves a correction when a stable block is reconstructed again', () => {

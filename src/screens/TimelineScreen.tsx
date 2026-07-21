@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
+import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
 import { TimelineEventCard } from '../components/TimelineEventCard';
 import { LocationSegmentRecord, ObservationOrigin } from '../data/contracts';
 import { DayPlace, DayRecord, TimelineEvent } from '../domain/types';
@@ -110,7 +111,8 @@ function RouteMap({ day, segments, knownPlaceClustering }: { day: DayRecord; seg
 }
 
 function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: DayRecord; segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult; onOpenEvent: (event: TimelineEvent) => void }) {
-  const confirmed = day.events.filter((event) => ['confirmed', 'corrected'].includes(event.state)).length;
+  const meaningfulEvents = day.events.filter((event) => !event.evidence.some((item) => item.source === 'desktop'));
+  const confirmed = meaningfulEvents.filter((event) => ['confirmed', 'corrected'].includes(event.state)).length;
   const desktopOnly = isDesktopOnlyDay(day);
   const assignmentBySegment = new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId]));
   const placeById = new Map(knownPlaceClustering.places.map((place) => [place.id, place]));
@@ -140,7 +142,7 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
       {desktopOnly ? (
         <View style={styles.desktopReconstructionStrip}>
           <Text style={styles.desktopReconstructionKicker}>REAL DESKTOP LAYER</Text>
-          <Text style={styles.reconstructionText}>{day.events.length} activity block{day.events.length === 1 ? '' : 's'} reconstructed from completed foreground-app sessions · refreshes automatically while the companion runs</Text>
+          <Text style={styles.reconstructionText}>{day.desktopUsage?.applications.length ?? 0} intentional application{day.desktopUsage?.applications.length === 1 ? '' : 's'} grouped from foreground use · refreshes automatically while the companion runs</Text>
         </View>
       ) : null}
 
@@ -161,11 +163,17 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
         <View style={styles.summaryStat}><Text style={styles.summaryValue}>{day.learning}</Text><Text style={styles.summaryLabel}>Learning</Text></View>
       </View>
 
-      <View style={styles.sectionHeader}>
-        <View><Text style={styles.sectionTitle}>How your day unfolded</Text><Text style={styles.sectionSubtitle}>{confirmed} confirmed · {day.events.length} reconstructed moments</Text></View>
-        <Text style={styles.live}>{desktopOnly ? 'REAL DESKTOP EVENTS' : 'PROTOTYPE EVENTS'}</Text>
-      </View>
-      {day.events.map((event) => <TimelineEventCard key={event.id} event={event} onPress={() => onOpenEvent(event)} />)}
+      {day.desktopUsage && day.desktopUsage.totalSeconds > 0 ? <DesktopUsagePanel usage={day.desktopUsage} /> : null}
+
+      {meaningfulEvents.length > 0 ? (
+        <>
+          <View style={styles.sectionHeader}>
+            <View><Text style={styles.sectionTitle}>Meaningful moments</Text><Text style={styles.sectionSubtitle}>{confirmed} confirmed · {meaningfulEvents.length} interpretations worth reviewing</Text></View>
+            <Text style={styles.live}>INTERPRETED EVENTS</Text>
+          </View>
+          {meaningfulEvents.map((event) => <TimelineEventCard key={event.id} event={event} onPress={() => onOpenEvent(event)} />)}
+        </>
+      ) : null}
     </>
   );
 }
@@ -319,7 +327,7 @@ function segmentOrigin(segments: LocationSegmentRecord[]): ObservationOrigin | '
 }
 
 function isDesktopOnlyDay(day: DayRecord) {
-  return day.places.length === 0 && day.events.some((event) => event.evidence.some((item) => item.source === 'desktop'));
+  return day.places.length === 0 && Boolean(day.desktopUsage?.totalSeconds);
 }
 
 function relativeLabelForDay(day: DayRecord) {

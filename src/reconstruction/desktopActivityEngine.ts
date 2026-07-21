@@ -1,5 +1,5 @@
 import { RawObservation } from '../data/contracts';
-import { DayRecord, EventCategory, TimelineEvent } from '../domain/types';
+import { DayRecord, DesktopUsageHour, DesktopUsageSummary, DigitalActivityCategory, EventCategory, TimelineEvent } from '../domain/types';
 
 export type DesktopActivityKind =
   | 'focused_work'
@@ -8,9 +8,7 @@ export type DesktopActivityKind =
   | 'entertainment'
   | 'browser'
   | 'ai_assistance'
-  | 'computer_activity'
-  | 'idle'
-  | 'locked';
+  | 'computer_activity';
 
 export interface DesktopActivityBlock {
   id: string;
@@ -34,6 +32,7 @@ export interface DesktopDayReconstruction {
   coveragePercent: number;
   startedAt: string;
   endedAt: string;
+  usage: DesktopUsageSummary;
 }
 
 interface ClassifiedSession {
@@ -45,15 +44,19 @@ interface ClassifiedSession {
   endedAt: string;
   durationSeconds: number;
   application: string | null;
+  applicationId: string;
+  applicationName: string;
+  usageCategory: DigitalActivityCategory;
   confidence: number;
 }
 
-const focusedApplications = ['code', 'devenv', 'rider64', 'webstorm64', 'pycharm64', 'idea64', 'excel', 'winword', 'powerpnt', 'figma', 'photoshop', 'illustrator', 'blender', 'autocad', 'notion', 'obsidian'];
+const focusedApplications = ['code', 'devenv', 'rider64', 'webstorm64', 'pycharm64', 'idea64', 'excel', 'winword', 'powerpnt', 'figma', 'photoshop', 'illustrator', 'blender', 'autocad', 'notion', 'obsidian', 'powershell', 'pwsh', 'cmd', 'windowsterminal'];
 const communicationApplications = ['teams', 'ms-teams', 'slack', 'zoom', 'outlook', 'thunderbird', 'webex'];
 const learningApplications = ['anki', 'kindle', 'duolingo'];
 const entertainmentApplications = ['spotify', 'vlc', 'steam', 'epicgameslauncher'];
 const browserApplications = ['chrome', 'msedge', 'firefox', 'brave', 'opera'];
-const systemApplications = ['explorer', 'taskmgr', 'powershell', 'pwsh', 'cmd', 'windowsterminal'];
+const systemApplications = ['explorer', 'taskmgr'];
+const ignoredApplications = new Set(['atira', 'electron']);
 
 export function reconstructDesktopActivity(observations: RawObservation[]): DesktopDayReconstruction[] {
   const sessions = observations
@@ -95,6 +98,7 @@ export function desktopDayToRecord(result: DesktopDayReconstruction, existing?: 
     routePath: '',
     places: [],
     events,
+    desktopUsage: result.usage,
   };
 }
 
@@ -137,6 +141,7 @@ function reconstructDay(dayId: string, sessions: ClassifiedSession[]): DesktopDa
     coveragePercent: spanSeconds > 0 ? Math.min(100, Math.round((observedSeconds / spanSeconds) * 100)) : 0,
     startedAt,
     endedAt,
+    usage: summarizeUsage(sessions),
   };
 }
 
@@ -146,12 +151,11 @@ function classifyObservation(observation: RawObservation): ClassifiedSession | n
   if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(endedAt.getTime()) || endedAt <= startedAt) return null;
   const durationSeconds = Math.max(1, Math.round((endedAt.getTime() - startedAt.getTime()) / 1000));
   const state = String(observation.payload.activityState ?? 'active');
-  const sampleCount = Number(observation.payload.sampleCount ?? 0);
   const application = typeof observation.payload.application === 'string' ? observation.payload.application : null;
-  if (state === 'idle' && durationSeconds < 60) return null;
-  if (state === 'locked' && durationSeconds < 30) return null;
-  if (state === 'active' && (!application || (durationSeconds < 5 && sampleCount < 2))) return null;
-  const classification = classifyApplication(application, state);
+  if (state !== 'active' || !application || durationSeconds < 60) return null;
+  const applicationId = normalizeApplication(application);
+  if (!applicationId || ignoredApplications.has(applicationId)) return null;
+  const classification = classifyApplication(application);
   return {
     observationId: observation.id,
     dayId: localDayId(startedAt),
@@ -159,14 +163,15 @@ function classifyObservation(observation: RawObservation): ClassifiedSession | n
     endedAt: endedAt.toISOString(),
     durationSeconds,
     application,
+    applicationId,
+    applicationName: displayApplicationName(applicationId, application),
+    usageCategory: usageCategoryForKind(classification.kind),
     ...classification,
   };
 }
 
-function classifyApplication(application: string | null, state: string): Pick<ClassifiedSession, 'kind' | 'title' | 'confidence'> {
-  if (state === 'locked') return { kind: 'locked', title: 'Computer locked', confidence: 0.98 };
-  if (state === 'idle') return { kind: 'idle', title: 'Away from computer', confidence: 0.94 };
-  const normalized = (application ?? '').toLowerCase().replace(/\.exe$/, '').replace(/[^a-z0-9-]/g, '');
+function classifyApplication(application: string | null): Pick<ClassifiedSession, 'kind' | 'title' | 'confidence'> {
+  const normalized = normalizeApplication(application ?? '');
   if (normalized === 'chatgpt') return { kind: 'ai_assistance', title: 'ChatGPT activity', confidence: 0.55 };
   if (focusedApplications.some((name) => normalized.includes(name))) return { kind: 'focused_work', title: 'Focused desktop work', confidence: 0.82 };
   if (communicationApplications.some((name) => normalized.includes(name))) return { kind: 'communication', title: 'Communication block', confidence: 0.86 };
@@ -180,7 +185,7 @@ function classifyApplication(application: string | null, state: string): Pick<Cl
 function blockToEvent(block: DesktopActivityBlock): TimelineEvent {
   const category: Record<DesktopActivityKind, EventCategory> = {
     focused_work: 'creation', communication: 'communication', learning: 'learning', entertainment: 'digital',
-    browser: 'digital', ai_assistance: 'digital', computer_activity: 'digital', idle: 'break', locked: 'break',
+    browser: 'digital', ai_assistance: 'digital', computer_activity: 'digital',
   };
   const appDetail = block.applications.length > 0 ? block.applications.join(', ') : 'No foreground application';
   return {
@@ -207,17 +212,107 @@ function blockToEvent(block: DesktopActivityBlock): TimelineEvent {
 function eventSummary(block: DesktopActivityBlock, applications: string) {
   if (block.kind === 'browser') return `The browser was foreground for ${formatDuration(block.durationSeconds)}. Without domains or window titles, ATIRA cannot infer whether that time was productive.`;
   if (block.kind === 'ai_assistance') return `ChatGPT was foreground for ${formatDuration(block.durationSeconds)}. The app name alone does not reveal whether this was work, learning, or personal use.`;
-  if (block.kind === 'idle') return `The computer received no input for ${formatDuration(block.durationSeconds)}; this is treated as a possible break, not proof that you left.`;
-  if (block.kind === 'locked') return `Windows reported a locked desktop for ${formatDuration(block.durationSeconds)}.`;
   return `${applications} stayed foreground across ${block.observationIds.length} session${block.observationIds.length === 1 ? '' : 's'}, supporting this ${block.title.toLowerCase()} inference.`;
 }
 
 function eventAlternatives(kind: DesktopActivityKind) {
-  if (['idle', 'locked'].includes(kind)) return ['Short break', 'Meeting away from desk', 'Finished for the day'];
   if (kind === 'communication') return ['Meetings', 'Email and messages', 'Personal communication'];
   if (kind === 'focused_work') return ['Focused work', 'Administrative work', 'Learning'];
   if (kind === 'learning') return ['Study', 'Reading', 'Practice'];
   return ['Work', 'Learning', 'Entertainment', 'General computer use'];
+}
+
+function summarizeUsage(sessions: ClassifiedSession[]): DesktopUsageSummary {
+  const applications = new Map<string, DesktopUsageSummary['applications'][number]>();
+  const hourCategories = Array.from({ length: 24 }, () => new Map<DigitalActivityCategory, number>());
+  const hourTotals = Array.from({ length: 24 }, () => 0);
+
+  for (const session of sessions) {
+    const usageSession = {
+      id: session.observationId,
+      applicationId: session.applicationId,
+      applicationName: session.applicationName,
+      category: session.usageCategory,
+      startedAt: session.startedAt,
+      endedAt: session.endedAt,
+      durationSeconds: session.durationSeconds,
+    };
+    const application = applications.get(session.applicationId) ?? {
+      applicationId: session.applicationId,
+      applicationName: session.applicationName,
+      category: session.usageCategory,
+      durationSeconds: 0,
+      sessions: [],
+    };
+    application.durationSeconds += session.durationSeconds;
+    application.sessions.push(usageSession);
+    applications.set(session.applicationId, application);
+    distributeSessionAcrossHours(session, hourTotals, hourCategories);
+  }
+
+  const hours: DesktopUsageHour[] = hourTotals.map((totalSeconds, hour) => ({
+    hour,
+    totalSeconds,
+    categories: [...hourCategories[hour].entries()]
+      .map(([category, durationSeconds]) => ({ category, durationSeconds }))
+      .sort((a, b) => b.durationSeconds - a.durationSeconds),
+  }));
+  const sortedApplications = [...applications.values()]
+    .map((application) => ({ ...application, sessions: application.sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt)) }))
+    .sort((a, b) => b.durationSeconds - a.durationSeconds);
+
+  return {
+    totalSeconds: sortedApplications.reduce((total, application) => total + application.durationSeconds, 0),
+    applications: sortedApplications,
+    hours,
+  };
+}
+
+function distributeSessionAcrossHours(
+  session: ClassifiedSession,
+  totals: number[],
+  categories: Map<DigitalActivityCategory, number>[],
+) {
+  let cursor = Date.parse(session.startedAt);
+  const end = Date.parse(session.endedAt);
+  while (cursor < end) {
+    const current = new Date(cursor);
+    const nextHour = new Date(current);
+    nextHour.setMinutes(60, 0, 0);
+    const boundary = Math.min(end, nextHour.getTime());
+    const seconds = Math.max(0, Math.round((boundary - cursor) / 1000));
+    const hour = current.getHours();
+    totals[hour] += seconds;
+    categories[hour].set(session.usageCategory, (categories[hour].get(session.usageCategory) ?? 0) + seconds);
+    cursor = boundary;
+  }
+}
+
+function usageCategoryForKind(kind: DesktopActivityKind): DigitalActivityCategory {
+  if (kind === 'focused_work') return 'creation';
+  if (kind === 'communication') return 'communication';
+  if (kind === 'learning') return 'learning';
+  if (kind === 'entertainment') return 'entertainment';
+  if (kind === 'browser') return 'browser';
+  if (kind === 'ai_assistance') return 'ai_assistance';
+  return 'other';
+}
+
+function normalizeApplication(application: string) {
+  return application.toLowerCase().replace(/\.exe$/, '').replace(/[^a-z0-9-]/g, '');
+}
+
+function displayApplicationName(applicationId: string, fallback: string) {
+  const knownNames: Record<string, string> = {
+    chatgpt: 'ChatGPT', chrome: 'Google Chrome', msedge: 'Microsoft Edge', firefox: 'Firefox', brave: 'Brave',
+    excel: 'Microsoft Excel', winword: 'Microsoft Word', powerpnt: 'Microsoft PowerPoint', outlook: 'Microsoft Outlook',
+    teams: 'Microsoft Teams', 'ms-teams': 'Microsoft Teams', slack: 'Slack', zoom: 'Zoom', spotify: 'Spotify',
+    code: 'Visual Studio Code', figma: 'Figma', notion: 'Notion', obsidian: 'Obsidian', explorer: 'File Explorer',
+    powershell: 'PowerShell', pwsh: 'PowerShell', cmd: 'Command Prompt', windowsterminal: 'Windows Terminal',
+  };
+  if (knownNames[applicationId]) return knownNames[applicationId];
+  const cleaned = fallback.replace(/\.exe$/i, '').trim();
+  return cleaned ? `${cleaned[0].toUpperCase()}${cleaned.slice(1)}` : 'Other';
 }
 
 function localDayId(date: Date) {

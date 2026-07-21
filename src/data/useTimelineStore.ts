@@ -257,7 +257,11 @@ async function reconstructStoredDesktopDays(repository: TimelineRepository) {
     const desktopRecord = desktopDayToRecord(result, existing);
     const nonDesktopEvents = (existing?.events ?? []).filter((event) => !event.evidence.some((item) => item.source === 'desktop'));
     const record = existing && nonDesktopEvents.length > 0
-      ? { ...existing, events: [...nonDesktopEvents, ...desktopRecord.events].sort((a, b) => a.start.localeCompare(b.start)) }
+      ? {
+          ...existing,
+          desktopUsage: desktopRecord.desktopUsage,
+          events: [...nonDesktopEvents, ...desktopRecord.events].sort((a, b) => a.start.localeCompare(b.start)),
+        }
       : desktopRecord;
     await repository.upsertDay(record);
   }

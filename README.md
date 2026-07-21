@@ -71,6 +71,7 @@ See [Docs/decisions/0004-location-reconstruction-engine.md](Docs/decisions/0004-
 See [Docs/decisions/0006-windows-desktop-companion.md](Docs/decisions/0006-windows-desktop-companion.md) for the desktop collector boundary and packaging path.
 See [Docs/decisions/0007-desktop-activity-reconstruction.md](Docs/decisions/0007-desktop-activity-reconstruction.md) for classification, confidence, and real-day generation.
 See [Docs/decisions/0008-windows-desktop-shell.md](Docs/decisions/0008-windows-desktop-shell.md) for development, installer, and tray behavior.
+See [Docs/decisions/0009-evidence-aggregation-and-fusion.md](Docs/decisions/0009-evidence-aggregation-and-fusion.md) for cumulative digital audits, noise filtering, and cross-source interpretation rules.
 See [Docs/integrations/HUAWEI_HEALTH_SETUP.md](Docs/integrations/HUAWEI_HEALTH_SETUP.md) for the wearable connector setup boundary.
 
 See [Docs/product/PRODUCT_CHARTER.md](Docs/product/PRODUCT_CHARTER.md) and [Docs/product/CAPABILITY_MATRIX.md](Docs/product/CAPABILITY_MATRIX.md).
