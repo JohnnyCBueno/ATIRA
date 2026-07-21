@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { RawObservation } from '../data/contracts';
-import { desktopDayToRecord, reconstructDesktopActivity } from './desktopActivityEngine';
+import { desktopDayResultsToRecord, desktopDayToRecord, reconstructDesktopActivity } from './desktopActivityEngine';
 
-const observation = (id: string, application: string | null, startedAt: string, endedAt: string, activityState = 'active'): RawObservation => ({
+const observation = (id: string, application: string | null, startedAt: string, endedAt: string, activityState = 'active', deviceId = 'device-windows'): RawObservation => ({
   id,
+  deviceId,
+  collectorId: `collector-${deviceId}`,
   source: 'desktop',
   kind: 'desktop_foreground',
   startedAt,
@@ -80,5 +82,23 @@ describe('desktop activity reconstruction', () => {
     first.events[0] = { ...first.events[0], title: 'Product planning', state: 'corrected', confidence: 1 };
     const rebuilt = desktopDayToRecord(result, first, new Date('2026-07-21T15:00:00.000Z'));
     expect(rebuilt.events[0]).toMatchObject({ title: 'Product planning', state: 'corrected', confidence: 1 });
+  });
+
+  it('never merges the same application across devices', () => {
+    const results = reconstructDesktopActivity([
+      observation('laptop-chat', 'ChatGPT', '2026-07-21T14:00:00.000Z', '2026-07-21T14:10:00.000Z', 'active', 'device-laptop'),
+      observation('desktop-chat', 'ChatGPT', '2026-07-21T14:00:00.000Z', '2026-07-21T14:20:00.000Z', 'active', 'device-desktop'),
+    ], [
+      { id: 'device-laptop', deviceClass: 'computer', platform: 'windows', label: 'Work laptop', createdAt: '2026-07-21T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z' },
+      { id: 'device-desktop', deviceClass: 'computer', platform: 'windows', label: 'Home desktop', createdAt: '2026-07-21T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z' },
+    ]);
+    expect(results).toHaveLength(2);
+    expect(results.map((result) => [result.usage.deviceLabel, result.usage.totalSeconds])).toEqual([
+      ['Work laptop', 600],
+      ['Home desktop', 1200],
+    ]);
+    const day = desktopDayResultsToRecord(results, undefined, new Date('2026-07-21T16:00:00.000Z'));
+    expect(day.desktopUsages).toHaveLength(2);
+    expect(day.understood).toBe('20m');
   });
 });

@@ -1,5 +1,5 @@
-import { RawObservation } from '../data/contracts';
-import { DayRecord, DesktopUsageHour, DesktopUsageSummary, DigitalActivityCategory, EventCategory, TimelineEvent } from '../domain/types';
+import { DeviceRecord, RawObservation } from '../data/contracts';
+import { DayRecord, DesktopUsageHour, DesktopUsageSummary, DeviceClass, DevicePlatform, DigitalActivityCategory, EventCategory, TimelineEvent } from '../domain/types';
 
 export type DesktopActivityKind =
   | 'focused_work'
@@ -25,6 +25,10 @@ export interface DesktopActivityBlock {
 
 export interface DesktopDayReconstruction {
   dayId: string;
+  deviceId: string;
+  deviceLabel: string;
+  deviceClass: DeviceClass;
+  platform: DevicePlatform;
   blocks: DesktopActivityBlock[];
   observedSeconds: number;
   focusedWorkSeconds: number;
@@ -37,6 +41,7 @@ export interface DesktopDayReconstruction {
 
 interface ClassifiedSession {
   observationId: string;
+  deviceId: string;
   dayId: string;
   kind: DesktopActivityKind;
   title: string;
@@ -58,51 +63,90 @@ const browserApplications = ['chrome', 'msedge', 'firefox', 'brave', 'opera'];
 const systemApplications = ['explorer', 'taskmgr'];
 const ignoredApplications = new Set(['atira', 'electron']);
 
-export function reconstructDesktopActivity(observations: RawObservation[]): DesktopDayReconstruction[] {
+export function reconstructDesktopActivity(observations: RawObservation[], devices: DeviceRecord[] = []): DesktopDayReconstruction[] {
+  const deviceById = new Map(devices.map((device) => [device.id, device]));
   const sessions = observations
     .filter((observation) => observation.source === 'desktop' && observation.kind === 'desktop_foreground')
     .map(classifyObservation)
     .filter((session): session is ClassifiedSession => session != null)
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-  const sessionsByDay = new Map<string, ClassifiedSession[]>();
+  const sessionsByDayAndDevice = new Map<string, ClassifiedSession[]>();
   for (const session of sessions) {
-    const daySessions = sessionsByDay.get(session.dayId) ?? [];
+    const key = `${session.dayId}\u0000${session.deviceId}`;
+    const daySessions = sessionsByDayAndDevice.get(key) ?? [];
     daySessions.push(session);
-    sessionsByDay.set(session.dayId, daySessions);
+    sessionsByDayAndDevice.set(key, daySessions);
   }
-  return [...sessionsByDay.entries()].map(([dayId, daySessions]) => reconstructDay(dayId, daySessions));
+  return [...sessionsByDayAndDevice.values()].map((daySessions) => {
+    const first = daySessions[0];
+    return reconstructDay(first.dayId, deviceFor(first.deviceId, deviceById), daySessions);
+  });
 }
 
 export function desktopDayToRecord(result: DesktopDayReconstruction, existing?: DayRecord, now = new Date()): DayRecord {
+  return desktopDayResultsToRecord([result], existing, now);
+}
+
+export function desktopDayResultsToRecord(results: DesktopDayReconstruction[], existing?: DayRecord, now = new Date()): DayRecord {
+  if (results.length === 0) throw new Error('At least one desktop reconstruction is required.');
+  const dayId = results[0].dayId;
+  if (results.some((result) => result.dayId !== dayId)) throw new Error('Desktop reconstructions must belong to one day.');
   const correctedEvents = new Map((existing?.events ?? [])
     .filter((event) => ['confirmed', 'corrected'].includes(event.state))
     .map((event) => [event.id, event]));
-  const events = result.blocks.map((block) => {
+  const blocks = results.flatMap((result) => result.blocks).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const events = blocks.map((block) => {
     const inferred = blockToEvent(block);
     const corrected = correctedEvents.get(inferred.id);
     return corrected ? { ...inferred, title: corrected.title, state: corrected.state, confidence: corrected.confidence } : inferred;
   });
-  const date = parseLocalDay(result.dayId);
+  const observedSeconds = unionDuration(blocks);
+  const focusedWorkSeconds = unionDuration(blocks.filter((block) => ['focused_work', 'communication'].includes(block.kind)));
+  const learningSeconds = unionDuration(blocks.filter((block) => block.kind === 'learning'));
+  const startedAt = blocks[0]?.startedAt ?? `${dayId}T00:00:00.000Z`;
+  const endedAt = blocks.at(-1)?.endedAt ?? startedAt;
+  const spanSeconds = Math.max(observedSeconds, (Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
+  const date = parseLocalDay(dayId);
   return {
-    id: result.dayId,
+    id: dayId,
     weekday: date.toLocaleDateString([], { weekday: 'short' }),
     dayNumber: String(date.getDate()),
     month: date.toLocaleDateString([], { month: 'long' }),
     relativeLabel: relativeDayLabel(date, now),
-    coverage: result.coveragePercent,
-    understood: formatDuration(result.observedSeconds),
-    work: formatDuration(result.focusedWorkSeconds),
+    coverage: spanSeconds > 0 ? Math.min(100, Math.round((observedSeconds / spanSeconds) * 100)) : 0,
+    understood: formatDuration(observedSeconds),
+    work: formatDuration(focusedWorkSeconds),
     movement: '—',
-    learning: formatDuration(result.learningSeconds),
+    learning: formatDuration(learningSeconds),
     distance: '—',
     routePath: '',
     places: [],
     events,
-    desktopUsage: result.usage,
+    desktopUsages: results.map((result) => result.usage).sort((a, b) => a.deviceLabel.localeCompare(b.deviceLabel)),
   };
 }
 
-function reconstructDay(dayId: string, sessions: ClassifiedSession[]): DesktopDayReconstruction {
+function unionDuration(blocks: DesktopActivityBlock[]) {
+  const intervals = blocks
+    .map((block) => [Date.parse(block.startedAt), Date.parse(block.endedAt)] as const)
+    .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && end > start)
+    .sort((a, b) => a[0] - b[0]);
+  let totalMilliseconds = 0;
+  let currentStart = intervals[0]?.[0];
+  let currentEnd = intervals[0]?.[1];
+  if (currentStart == null || currentEnd == null) return 0;
+  for (const [start, end] of intervals.slice(1)) {
+    if (start <= currentEnd) currentEnd = Math.max(currentEnd, end);
+    else {
+      totalMilliseconds += currentEnd - currentStart;
+      currentStart = start;
+      currentEnd = end;
+    }
+  }
+  return Math.round((totalMilliseconds + currentEnd - currentStart) / 1000);
+}
+
+function reconstructDay(dayId: string, device: DeviceRecord, sessions: ClassifiedSession[]): DesktopDayReconstruction {
   const blocks: DesktopActivityBlock[] = [];
   for (const session of sessions) {
     const current = blocks.at(-1);
@@ -134,6 +178,10 @@ function reconstructDay(dayId: string, sessions: ClassifiedSession[]): DesktopDa
   const spanSeconds = Math.max(observedSeconds, (Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
   return {
     dayId,
+    deviceId: device.id,
+    deviceLabel: device.label,
+    deviceClass: device.deviceClass,
+    platform: device.platform,
     blocks,
     observedSeconds,
     focusedWorkSeconds: blocks.filter((block) => ['focused_work', 'communication'].includes(block.kind)).reduce((total, block) => total + block.durationSeconds, 0),
@@ -141,7 +189,7 @@ function reconstructDay(dayId: string, sessions: ClassifiedSession[]): DesktopDa
     coveragePercent: spanSeconds > 0 ? Math.min(100, Math.round((observedSeconds / spanSeconds) * 100)) : 0,
     startedAt,
     endedAt,
-    usage: summarizeUsage(sessions),
+    usage: summarizeUsage(sessions, device),
   };
 }
 
@@ -158,6 +206,7 @@ function classifyObservation(observation: RawObservation): ClassifiedSession | n
   const classification = classifyApplication(application);
   return {
     observationId: observation.id,
+    deviceId: observation.deviceId ?? 'legacy-desktop-device',
     dayId: localDayId(startedAt),
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
@@ -222,7 +271,7 @@ function eventAlternatives(kind: DesktopActivityKind) {
   return ['Work', 'Learning', 'Entertainment', 'General computer use'];
 }
 
-function summarizeUsage(sessions: ClassifiedSession[]): DesktopUsageSummary {
+function summarizeUsage(sessions: ClassifiedSession[], device: DeviceRecord): DesktopUsageSummary {
   const applications = new Map<string, DesktopUsageSummary['applications'][number]>();
   const hourCategories = Array.from({ length: 24 }, () => new Map<DigitalActivityCategory, number>());
   const hourTotals = Array.from({ length: 24 }, () => 0);
@@ -230,6 +279,7 @@ function summarizeUsage(sessions: ClassifiedSession[]): DesktopUsageSummary {
   for (const session of sessions) {
     const usageSession = {
       id: session.observationId,
+      deviceId: session.deviceId,
       applicationId: session.applicationId,
       applicationName: session.applicationName,
       category: session.usageCategory,
@@ -238,6 +288,7 @@ function summarizeUsage(sessions: ClassifiedSession[]): DesktopUsageSummary {
       durationSeconds: session.durationSeconds,
     };
     const application = applications.get(session.applicationId) ?? {
+      deviceId: session.deviceId,
       applicationId: session.applicationId,
       applicationName: session.applicationName,
       category: session.usageCategory,
@@ -262,9 +313,24 @@ function summarizeUsage(sessions: ClassifiedSession[]): DesktopUsageSummary {
     .sort((a, b) => b.durationSeconds - a.durationSeconds);
 
   return {
+    deviceId: device.id,
+    deviceLabel: device.label,
+    deviceClass: device.deviceClass,
+    platform: device.platform,
     totalSeconds: sortedApplications.reduce((total, application) => total + application.durationSeconds, 0),
     applications: sortedApplications,
     hours,
+  };
+}
+
+function deviceFor(deviceId: string, devices: Map<string, DeviceRecord>): DeviceRecord {
+  return devices.get(deviceId) ?? {
+    id: deviceId,
+    deviceClass: 'computer',
+    platform: 'unknown',
+    label: deviceId === 'legacy-desktop-device' ? 'Legacy Windows computer' : 'Unknown computer',
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
   };
 }
 

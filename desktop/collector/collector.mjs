@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { DesktopSessionizer } from './sessionizer.mjs';
+import { loadOrCreateDesktopIdentity } from './device-identity.mjs';
 import { HuaweiHealthConnector } from '../connectors/huawei-health/huawei-health.mjs';
 
 const collectorDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -17,7 +18,6 @@ const observationPath = path.join(dataDirectory, 'observations.ndjson');
 const pidPath = path.join(dataDirectory, 'collector.pid');
 const samplerPath = path.join(collectorDirectory, 'windows-sampler.ps1');
 const allowedOrigins = new Set(['http://localhost:8081', 'http://127.0.0.1:8081', 'http://127.0.0.1:43124']);
-const sessionizer = new DesktopSessionizer();
 const huaweiHealth = new HuaweiHealthConnector();
 const observations = [];
 const startedAt = new Date().toISOString();
@@ -25,6 +25,8 @@ let worker = null;
 let stopping = false;
 
 await mkdir(dataDirectory, { recursive: true });
+const identity = await loadOrCreateDesktopIdentity(dataDirectory);
+const sessionizer = new DesktopSessionizer({ observationNamespace: identity.device.id });
 await loadObservations();
 await writeFile(pidPath, String(process.pid), 'utf8');
 
@@ -64,6 +66,8 @@ const server = createServer((request, response) => {
     sendJson(response, 200, {
       running: true,
       platform: 'windows',
+      device: identity.device,
+      collector: identity.collector,
       startedAt,
       samplingIntervalMs: options.intervalMilliseconds,
       idleThresholdSeconds: options.idleThresholdSeconds,
@@ -84,7 +88,7 @@ const server = createServer((request, response) => {
     return;
   }
   if (url.pathname === '/observations') {
-    sendJson(response, 200, { observations: observations.slice(-2000) });
+    sendJson(response, 200, { device: identity.device, collector: identity.collector, observations: observations.slice(-2000) });
     return;
   }
   if (url.pathname === '/integrations/huawei/status') {
@@ -163,6 +167,7 @@ function startSampler() {
 }
 
 async function persistObservation(observation) {
+  observation = attachIdentity(observation);
   if (observations.some((item) => item.id === observation.id)) return;
   observations.push(observation);
   await appendFile(observationPath, `${JSON.stringify(observation)}\n`, 'utf8');
@@ -176,7 +181,7 @@ async function loadObservations() {
       if (!line.trim()) continue;
       try {
         const observation = JSON.parse(line);
-        if (observation?.source === 'desktop' && observation?.kind === 'desktop_foreground') observations.push(observation);
+        if (observation?.source === 'desktop' && observation?.kind === 'desktop_foreground') observations.push(attachIdentity(observation));
       } catch {
         // A damaged line is isolated; later valid observations remain readable.
       }
@@ -184,6 +189,14 @@ async function loadObservations() {
   } catch (error) {
     if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
   }
+}
+
+function attachIdentity(observation) {
+  return {
+    ...observation,
+    deviceId: identity.device.id,
+    collectorId: identity.collector.id,
+  };
 }
 
 async function stop(exitCode) {

@@ -1,4 +1,4 @@
-import { CollectorStatus, RawObservation, TimelineRepository } from '../data/contracts';
+import { CollectorRecord, CollectorStatus, DeviceRecord, RawObservation, TimelineRepository } from '../data/contracts';
 import { Linking } from 'react-native';
 
 const DESKTOP_COMPANION_URL = 'http://127.0.0.1:43123';
@@ -9,6 +9,8 @@ interface DesktopCompanionHealth {
   platform: string;
   completedObservationCount: number;
   currentSession: { state: string; application: string | null } | null;
+  device: DeviceRecord;
+  collector: CollectorRecord;
   privacy: {
     windowTitles: boolean;
     screenshots: boolean;
@@ -34,7 +36,7 @@ export async function inspectDesktopCollector(): Promise<CollectorStatus> {
     return {
       source: 'desktop',
       state: 'available_limited',
-      detail: `Windows companion is running locally. Current state: ${current}. Window titles are ${health.privacy.windowTitles ? 'enabled' : 'off'}.`,
+      detail: `${health.device.label} is running locally. Current state: ${current}. Window titles are ${health.privacy.windowTitles ? 'enabled' : 'off'}.`,
       updatedAt: new Date().toISOString(),
     };
   } catch {
@@ -48,13 +50,22 @@ export async function inspectDesktopCollector(): Promise<CollectorStatus> {
 }
 
 export async function syncDesktopObservations(repository: TimelineRepository): Promise<CollectorStatus> {
-  let payload: { observations: unknown[] };
+  let payload: { device: unknown; collector: unknown; observations: unknown[] };
   try {
-    payload = await fetchJson<{ observations: unknown[] }>('/observations');
+    payload = await fetchJson<{ device: unknown; collector: unknown; observations: unknown[] }>('/observations');
   } catch (cause) {
     throw new Error('Desktop companion is not reachable. Start it in PowerShell with: npm run desktop:collector', { cause });
   }
-  const observations = payload.observations.filter(isDesktopObservation);
+  if (!isDeviceRecord(payload.device) || !isCollectorRecord(payload.collector) || payload.collector.deviceId !== payload.device.id) {
+    throw new Error('Desktop companion returned an invalid device identity.');
+  }
+  const device = payload.device;
+  const collector = payload.collector;
+  await repository.upsertDevice(device);
+  await repository.upsertCollector(collector);
+  const observations = payload.observations
+    .filter(isDesktopObservation)
+    .map((observation) => ({ ...observation, deviceId: device.id, collectorId: collector.id }));
   const before = await repository.getDiagnostics();
   await repository.appendObservations(observations);
   const after = await repository.getDiagnostics();
@@ -63,7 +74,7 @@ export async function syncDesktopObservations(repository: TimelineRepository): P
   const status: CollectorStatus = {
     source: 'desktop',
     state: 'available_full',
-    detail: `Synced ${added} new desktop session${added === 1 ? '' : 's'} from the local Windows companion.`,
+    detail: `Synced ${added} new desktop session${added === 1 ? '' : 's'} from ${device.label}.`,
     lastObservedAt,
     updatedAt: new Date().toISOString(),
   };
@@ -158,4 +169,21 @@ function isDesktopObservation(value: unknown): value is RawObservation {
     typeof observation.capturedAt === 'string' &&
     typeof observation.quality === 'number' &&
     observation.payload != null && typeof observation.payload === 'object';
+}
+
+function isDeviceRecord(value: unknown): value is DeviceRecord {
+  if (!value || typeof value !== 'object') return false;
+  const device = value as Partial<DeviceRecord>;
+  return typeof device.id === 'string' && typeof device.label === 'string' &&
+    ['phone', 'tablet', 'computer', 'watch', 'band', 'other'].includes(String(device.deviceClass)) &&
+    ['windows', 'macos', 'ios', 'android', 'harmonyos', 'web', 'unknown'].includes(String(device.platform)) &&
+    typeof device.createdAt === 'string' && typeof device.updatedAt === 'string';
+}
+
+function isCollectorRecord(value: unknown): value is CollectorRecord {
+  if (!value || typeof value !== 'object') return false;
+  const collector = value as Partial<CollectorRecord>;
+  return typeof collector.id === 'string' && typeof collector.deviceId === 'string' &&
+    collector.source === 'desktop' && collector.provider === 'atira_windows_companion' &&
+    typeof collector.label === 'string' && typeof collector.createdAt === 'string' && typeof collector.updatedAt === 'string';
 }

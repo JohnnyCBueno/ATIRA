@@ -34,11 +34,15 @@ export function DesktopUsagePanel({ usage }: Props) {
     <View>
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.eyebrow}>DIGITAL ACTIVITY</Text>
+          <Text style={styles.eyebrow}>DIGITAL ACTIVITY · {usage.platform.toUpperCase()}</Text>
           <Text style={styles.total}>{formatDuration(usage.totalSeconds)}</Text>
           <Text style={styles.totalLabel}>observed foreground use</Text>
         </View>
-        <View style={styles.filterBadge}><Text style={styles.filterBadgeText}>MEANINGFUL USE · 1M+</Text></View>
+        <View style={styles.deviceIdentity}>
+          <Text style={styles.deviceIdentityKicker}>DEVICE</Text>
+          <Text style={styles.deviceIdentityLabel}>{usage.deviceLabel}</Text>
+          <Text style={styles.deviceIdentityRule}>Meaningful use · 1m+</Text>
+        </View>
       </View>
 
       <View style={styles.chartCard}>
@@ -185,8 +189,10 @@ const styles = StyleSheet.create({
   eyebrow: { color: colours.moss, fontSize: 8, fontWeight: '900', letterSpacing: 1.1 },
   total: { color: colours.ink, fontSize: 28, lineHeight: 32, fontWeight: '900', letterSpacing: -0.7, marginTop: 4 },
   totalLabel: { color: colours.inkSoft, fontSize: 9, marginTop: 2 },
-  filterBadge: { backgroundColor: colours.mossSoft, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 7 },
-  filterBadgeText: { color: colours.moss, fontSize: 7, fontWeight: '900', letterSpacing: 0.6 },
+  deviceIdentity: { maxWidth: 155, alignItems: 'flex-end', backgroundColor: colours.mossSoft, borderRadius: radius.medium, paddingHorizontal: 11, paddingVertical: 8 },
+  deviceIdentityKicker: { color: colours.moss, fontSize: 6, fontWeight: '900', letterSpacing: 0.8 },
+  deviceIdentityLabel: { color: colours.ink, fontSize: 10, fontWeight: '900', marginTop: 2 },
+  deviceIdentityRule: { color: colours.inkSoft, fontSize: 7, marginTop: 2 },
   chartCard: { backgroundColor: colours.surface, borderRadius: radius.large, borderWidth: 1, borderColor: colours.line, padding: 16 },
   chartLegend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, minHeight: 26 },
   legendItem: { flexDirection: 'row', alignItems: 'center' },

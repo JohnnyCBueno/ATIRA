@@ -99,7 +99,7 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
       <View style={styles.profileCard}>
         <View style={styles.profileHeader}>
           <View style={styles.profileIcon}><Text style={styles.profileIconText}>A</Text></View>
-          <View style={styles.profileCopy}><Text style={styles.profileName}>Alex’s private model</Text><Text style={styles.profileDetail}>Local schema v{diagnostics?.schemaVersion ?? 1} · {diagnostics?.correctionCount ?? 0} saved corrections</Text></View>
+          <View style={styles.profileCopy}><Text style={styles.profileName}>Alex’s private model</Text><Text style={styles.profileDetail}>Local schema v{diagnostics?.schemaVersion ?? 1} · {diagnostics?.deviceCount ?? 0} registered device{diagnostics?.deviceCount === 1 ? '' : 's'} · {diagnostics?.correctionCount ?? 0} saved corrections</Text></View>
         </View>
         <View style={styles.memoryRow}>
           <View style={styles.memoryStat}><Text style={styles.memoryValue}>{knownPlaceCount}</Text><Text style={styles.memoryLabel}>known places</Text></View>

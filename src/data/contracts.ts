@@ -1,4 +1,4 @@
-import { DayRecord, EvidenceSource, TimelineEvent } from '../domain/types';
+import { DayRecord, DeviceClass, DevicePlatform, EvidenceSource, TimelineEvent } from '../domain/types';
 
 export type ObservationKind =
   | 'location_sample'
@@ -21,6 +21,8 @@ export type CapabilityState =
 
 export interface RawObservation {
   id: string;
+  deviceId?: string;
+  collectorId?: string;
   source: EvidenceSource;
   kind: ObservationKind;
   startedAt: string;
@@ -58,8 +60,29 @@ export interface LocationSegmentRecord {
 
 export interface ObservationQuery {
   source?: EvidenceSource;
+  deviceId?: string;
+  collectorId?: string;
   from?: string;
   to?: string;
+}
+
+export interface DeviceRecord {
+  id: string;
+  deviceClass: DeviceClass;
+  platform: DevicePlatform;
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CollectorRecord {
+  id: string;
+  deviceId: string;
+  source: EvidenceSource;
+  provider: string;
+  label: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CollectorStatus {
@@ -88,6 +111,8 @@ export interface RepositoryDiagnostics {
   observationCount: number;
   correctionCount: number;
   segmentCount: number;
+  deviceCount: number;
+  collectorCount: number;
 }
 
 export interface TimelineRepository {
@@ -97,6 +122,10 @@ export interface TimelineRepository {
   saveEvent(dayId: string, event: TimelineEvent, correction: EventCorrection): Promise<void>;
   appendObservations(observations: RawObservation[]): Promise<void>;
   listObservations(query?: ObservationQuery): Promise<RawObservation[]>;
+  listDevices(): Promise<DeviceRecord[]>;
+  upsertDevice(device: DeviceRecord): Promise<void>;
+  listCollectors(): Promise<CollectorRecord[]>;
+  upsertCollector(collector: CollectorRecord): Promise<void>;
   replaceLocationSegments(dayId: string, segments: LocationSegmentRecord[]): Promise<void>;
   listLocationSegments(dayId?: string): Promise<LocationSegmentRecord[]>;
   listCollectorStatuses(): Promise<CollectorStatus[]>;
@@ -104,7 +133,7 @@ export interface TimelineRepository {
   getDiagnostics(): Promise<RepositoryDiagnostics>;
 }
 
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 3;
 
 export const initialCollectorStatuses: CollectorStatus[] = [
   {

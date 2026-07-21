@@ -44,17 +44,11 @@ Known-place intervals and device-activity intervals stay separate evidence objec
 
 Laptop use alone does not prove work. Work-mode interpretations also consider application category, calendar context, learned corrections, time, and missing evidence.
 
-### Network context is a place signal, not remote phone tracking
+### Location requires a dedicated, permissioned collector
 
-ATIRA may use a consented, locally stored network fingerprint to recognize a known place. Useful inputs include the current Wi-Fi network, access-point identifier, gateway, and a coarse public-IP fallback. Raw identifiers should be minimized and hashed before persistence where possible.
+ATIRA will not build an IP-address, MAC-address, or router-presence workaround for tracking phones. These signals cannot provide the continuous, device-specific route or movement quality that the product promise requires.
 
-Network context can support:
-
-- recognizing that the Windows laptop is on the user's labelled Home or Office network;
-- resolving a laptop's place when precise location is unavailable;
-- optionally confirming that a known device is present on a user-controlled local network through a router-specific connector.
-
-It cannot supply a continuous phone route, phone application usage, or reliable global phone identity. Client MAC addresses are local-network identifiers and are commonly randomized. A shared public IP generally identifies a network exit, not one device. These signals therefore never masquerade as phone GPS.
+Real location work resumes when ATIRA can run a dedicated collector on the device being located. Until then, location fixtures remain visibly fictional development inputs and missing location remains an honest capability state.
 
 ## Phased build
 
@@ -66,7 +60,7 @@ It cannot supply a continuous phone route, phone application usage, or reliable 
 
 Exit condition: real Windows sessions can be captured, reconstructed, aggregated, and inspected without producing a card for every process switch. **Met for the alpha.**
 
-### Phase 1 - Device identity and source registry (next)
+### Phase 1 - Device identity and source registry (implemented in the Windows alpha)
 
 - Add device and collector registries to the normalized data contract.
 - Give the current Windows installation a persistent local device identity and friendly label.
@@ -77,17 +71,25 @@ Exit condition: real Windows sessions can be captured, reconstructed, aggregated
 
 Exit condition: ATIRA cannot accidentally merge activity from two devices, and every visible digital total can explain which device produced it.
 
-### Phase 2 - Windows place context
+### Phase 2 - Device-aware desktop intelligence (next)
 
-- Collect Windows location through the operating-system permission path where available.
-- Add a privacy-minimized network fingerprint as a resilient known-place signal.
-- Ask the user to label recurring contexts such as Home and Office with a one-tap confirmation.
-- Represent precise coordinates, coarse IP location, and network recognition with distinct accuracy and provenance.
-- Show real laptop place coverage and gaps without inventing movement.
+- Add device management under You, including user-editable friendly labels.
+- Add local application aliases, categories, exclusions, and corrections scoped to a device.
+- Build real Patterns cuts by device, application, category, day, week, and month.
+- Keep ambiguous applications such as browsers and AI assistants neutral until other evidence supports an interpretation.
 
-Exit condition: the desktop can usually identify Home versus Office on this development laptop, while clearly distinguishing precise, coarse, inferred, and unknown location.
+Exit condition: the Windows-only product can answer useful digital-audit questions without confusing applications, devices, raw telemetry, or inferred productivity.
 
-### Phase 3 - Device/place fusion and useful patterns
+### Phase 3 - Dedicated phone collectors and real location (deferred until a hardware path is available)
+
+- Build Android location, activity-recognition, and Usage Access collectors first where practical.
+- Build iOS Core Location, motion, HealthKit, and the region/capability-appropriate Screen Time experience when macOS/Xcode and signing access are available.
+- Test permission, background execution, battery, and missing-coverage behavior on real hardware.
+- Preserve explicit capability states: unavailable data is not zero activity.
+
+Exit condition: a real phone can provide continuous place/movement evidence and the platform-available digital evidence with honest coverage.
+
+### Phase 4 - Device/place fusion and useful patterns
 
 - Join activity and place intervals deterministically.
 - Introduce conservative Office day, Work from home, and After-hours work at home candidates.
@@ -97,7 +99,7 @@ Exit condition: the desktop can usually identify Home versus Office on this deve
 
 Exit condition: a real week can answer where computer activity occurred and make reviewable work-pattern suggestions without treating all laptop time as productive work.
 
-### Phase 4 - Health and wearable sources
+### Phase 5 - Health and wearable sources
 
 - Complete Huawei Health import/connectivity evaluation using the existing connector boundary.
 - Normalize sleep, heart rate, exercise, and recovery with source and device provenance.
@@ -105,15 +107,6 @@ Exit condition: a real week can answer where computer activity occurred and make
 - Add HealthKit and Apple Watch ingestion when macOS/Xcode and Apple signing access are available.
 
 Exit condition: health context can corroborate sleep and exercise periods without being treated as medical advice or an exact account of activity.
-
-### Phase 5 - Phone collectors
-
-- Build Android location, activity-recognition, and Usage Access collectors first where practical.
-- Build iOS Core Location, motion, HealthKit, and the region/capability-appropriate Screen Time experience.
-- Preserve explicit capability states: unavailable data is not zero activity.
-- Add encrypted, authenticated synchronization between a person's devices only when the local single-device paths are trustworthy.
-
-Exit condition: a real phone can provide continuous place/movement evidence and the legally/platform-available digital evidence, with permission, battery, and missing-coverage behavior tested on hardware.
 
 ### Phase 6 - Personal LifeOS hardening
 
@@ -129,11 +122,11 @@ Exit condition: ATIRA is useful, understandable, and controllable across devices
 
 The next implementation slice is deliberately bounded:
 
-1. Define and migrate the device/collector registry.
-2. Assign the Windows alpha a stable local ID and friendly label.
-3. Make the desktop usage audit explicitly device-scoped.
-4. Prototype a local Windows network-context collector and known-place labels.
-5. Fuse desktop sessions with known-place intervals in a deterministic, tested layer.
-6. Surface only the first three place-aware work candidates: Office day, Work from home, and After-hours work at home.
+1. Define and migrate the device/collector registry. **Implemented.**
+2. Assign the Windows alpha a stable local ID and friendly label. **Implemented.**
+3. Make the desktop usage audit explicitly device-scoped. **Implemented.**
+4. Add editable device labels and device-scoped application rules.
+5. Turn the existing cumulative audit into real day, week, and month Patterns views.
+6. Defer place-aware work candidates until a dedicated location collector supplies suitable evidence.
 
-This slice creates real infrastructure for every later phone and wearable source while producing a useful laptop-only capability now.
+This creates real infrastructure for every later phone and wearable source while producing a useful laptop-only capability now. IP and MAC-address tracking are explicitly outside the implementation plan.

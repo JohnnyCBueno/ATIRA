@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 
 export class DesktopSessionizer {
   #current = null;
+  #observationNamespace;
+
+  constructor({ observationNamespace = 'unregistered-device' } = {}) {
+    this.#observationNamespace = observationNamespace;
+  }
 
   push(sample) {
     const normalized = normalizeSample(sample);
@@ -15,14 +20,14 @@ export class DesktopSessionizer {
       this.#current.maximumIdleSeconds = Math.max(this.#current.maximumIdleSeconds, normalized.idleSeconds);
       return null;
     }
-    const completed = toObservation(this.#current, normalized.capturedAt);
+    const completed = toObservation(this.#current, normalized.capturedAt, this.#observationNamespace);
     this.#current = startSession(normalized);
     return completed;
   }
 
   flush(endedAt = new Date().toISOString()) {
     if (!this.#current) return null;
-    const completed = toObservation(this.#current, endedAt);
+    const completed = toObservation(this.#current, endedAt, this.#observationNamespace);
     this.#current = null;
     return completed;
   }
@@ -70,9 +75,9 @@ function sessionKey(sample) {
   return [sample.state, sample.application ?? '', sample.windowTitle ?? ''].join('|');
 }
 
-function toObservation(session, endedAtInput) {
+function toObservation(session, endedAtInput, observationNamespace) {
   const endedAt = new Date(endedAtInput).toISOString();
-  const digest = createHash('sha256').update(`${session.key}|${session.startedAt}`).digest('hex').slice(0, 20);
+  const digest = createHash('sha256').update(`${observationNamespace}|${session.key}|${session.startedAt}`).digest('hex').slice(0, 20);
   const durationSeconds = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(session.startedAt)) / 1000));
   return {
     id: `desktop-${digest}`,

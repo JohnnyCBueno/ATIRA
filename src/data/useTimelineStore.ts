@@ -7,7 +7,7 @@ import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstructio
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
 import { connectOrSyncHuaweiHealth, inspectDesktopCollector, inspectHuaweiHealthConnector, syncDesktopObservations, syncHuaweiHealthObservations } from '../collectors/desktopCollectorClient';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
-import { desktopDayToRecord, reconstructDesktopActivity } from '../reconstruction/desktopActivityEngine';
+import { desktopDayResultsToRecord, reconstructDesktopActivity } from '../reconstruction/desktopActivityEngine';
 import { CollectorStatus, EventCorrection, LocationSegmentRecord, RepositoryDiagnostics, TimelineRepository } from './contracts';
 import { getTimelineRepository } from './timelineRepository';
 
@@ -247,19 +247,30 @@ async function reconstructStoredLocationDays(repository: TimelineRepository) {
 }
 
 async function reconstructStoredDesktopDays(repository: TimelineRepository) {
-  const [observations, existingDays] = await Promise.all([
+  const [observations, devices, existingDays] = await Promise.all([
     repository.listObservations({ source: 'desktop' }),
+    repository.listDevices(),
     repository.listDays(),
   ]);
   const existingById = new Map(existingDays.map((day) => [day.id, day]));
-  for (const result of reconstructDesktopActivity(observations)) {
-    const existing = existingById.get(result.dayId);
-    const desktopRecord = desktopDayToRecord(result, existing);
+  const resultsByDay = new Map<string, ReturnType<typeof reconstructDesktopActivity>>();
+  for (const result of reconstructDesktopActivity(observations, devices)) {
+    const dayResults = resultsByDay.get(result.dayId) ?? [];
+    dayResults.push(result);
+    resultsByDay.set(result.dayId, dayResults);
+  }
+  for (const [dayId, results] of resultsByDay) {
+    const existing = existingById.get(dayId);
+    const desktopRecord = desktopDayResultsToRecord(results, existing);
     const nonDesktopEvents = (existing?.events ?? []).filter((event) => !event.evidence.some((item) => item.source === 'desktop'));
     const record = existing && nonDesktopEvents.length > 0
       ? {
           ...existing,
-          desktopUsage: desktopRecord.desktopUsage,
+          coverage: desktopRecord.coverage,
+          understood: desktopRecord.understood,
+          work: desktopRecord.work,
+          learning: desktopRecord.learning,
+          desktopUsages: desktopRecord.desktopUsages,
           events: [...nonDesktopEvents, ...desktopRecord.events].sort((a, b) => a.start.localeCompare(b.start)),
         }
       : desktopRecord;

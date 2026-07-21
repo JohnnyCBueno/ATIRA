@@ -60,8 +60,13 @@ export type DigitalActivityCategory =
   | 'ai_assistance'
   | 'other';
 
+export type DeviceClass = 'phone' | 'tablet' | 'computer' | 'watch' | 'band' | 'other';
+
+export type DevicePlatform = 'windows' | 'macos' | 'ios' | 'android' | 'harmonyos' | 'web' | 'unknown';
+
 export interface DesktopUsageSession {
   id: string;
+  deviceId: string;
   applicationId: string;
   applicationName: string;
   category: DigitalActivityCategory;
@@ -71,6 +76,7 @@ export interface DesktopUsageSession {
 }
 
 export interface DesktopUsageApplication {
+  deviceId: string;
   applicationId: string;
   applicationName: string;
   category: DigitalActivityCategory;
@@ -85,6 +91,10 @@ export interface DesktopUsageHour {
 }
 
 export interface DesktopUsageSummary {
+  deviceId: string;
+  deviceLabel: string;
+  deviceClass: DeviceClass;
+  platform: DevicePlatform;
   totalSeconds: number;
   applications: DesktopUsageApplication[];
   hours: DesktopUsageHour[];
@@ -115,7 +125,7 @@ export interface DayRecord {
   inferredRoutePath?: string;
   places: DayPlace[];
   events: TimelineEvent[];
-  desktopUsage?: DesktopUsageSummary;
+  desktopUsages?: DesktopUsageSummary[];
 }
 
 export interface CapabilityItem {

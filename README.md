@@ -29,6 +29,8 @@ Leave that terminal running and use the computer normally. While ATIRA is open i
 
 The companion records process names and active/idle/locked intervals. Window titles are off by default, and it does not capture screenshots, keystrokes, document contents, or URLs. Its current NDJSON persistence is local, git-ignored, and plaintext for development; it is not the release storage design. See [desktop/README.md](desktop/README.md) for the exact test flow and limitations.
 
+Each companion installation owns a persistent random device and collector ID stored alongside its local observations. ATIRA does not use a MAC address, hostname, or hardware serial as identity, and application usage is aggregated separately for each registered device.
+
 ## Run the native Windows app
 
 The Electron shell launches ATIRA as a normal Windows window and embeds the collector, tray controls, and local data service:
@@ -61,6 +63,7 @@ On Windows, the quickest phone-shaped development loop is `npm run web` with a r
 - Native: SQLCipher-backed Expo SQLite with its generated key held in SecureStore.
 - Web preview: clearly labelled development-only local storage adapter.
 - Normalized tables/contracts for observations, collector states, days, events, evidence, and corrections.
+- Device and collector registries with device-scoped observation queries and digital aggregates.
 - Explicit foreground location capture and development-build background task scaffolding.
 - Deterministic location reconstruction for cleaning, stays, journeys, gaps, distance, coverage, and conservative travel modes.
 - Windows foreground-app and idle-state collection through a loopback-only companion API.

@@ -39,3 +39,11 @@ test('flush closes the current session and clears it', () => {
   assert.equal(observation.payload.durationSeconds, 60);
   assert.equal(sessionizer.snapshot(), null);
 });
+
+test('observation ids are namespaced by device', () => {
+  const first = new DesktopSessionizer({ observationNamespace: 'device-one' });
+  const second = new DesktopSessionizer({ observationNamespace: 'device-two' });
+  first.push(sample('2026-07-21T12:00:00.000Z', 'Code'));
+  second.push(sample('2026-07-21T12:00:00.000Z', 'Code'));
+  assert.notEqual(first.flush('2026-07-21T12:01:00.000Z').id, second.flush('2026-07-21T12:01:00.000Z').id);
+});

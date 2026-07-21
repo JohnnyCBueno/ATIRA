@@ -42,6 +42,8 @@ Window-title collection exists only as an explicit developer flag and is not use
 
 The development companion stores completed sessions in `desktop/data/observations.ndjson`. That folder is excluded from git, but the file is plaintext. A distributable release must replace it with an encrypted store whose key is protected by Windows, and must add pause, retention, export, and deletion controls.
 
+The same directory contains `identity.json`, which holds random installation-specific device and collector IDs plus the friendly label shown in ATIRA. It contains no MAC address, hostname, or hardware serial. Existing observations are associated with this identity when the companion loads them; new observation IDs are also namespaced by device.
+
 ## Current limitations
 
 - It is started manually from PowerShell and is not yet a packaged tray app or startup service.

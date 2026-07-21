@@ -2,8 +2,10 @@ import * as SQLite from 'expo-sqlite';
 import { DayPlace, DayRecord, EventCategory, EventState, EvidenceItem, TimelineEvent } from '../domain/types';
 import {
   CapabilityState,
+  CollectorRecord,
   CollectorStatus,
   DATABASE_SCHEMA_VERSION,
+  DeviceRecord,
   EventCorrection,
   initialCollectorStatuses,
   LocationSegmentRecord,
@@ -29,6 +31,7 @@ interface DayRow {
   route_path: string;
   inferred_route_path: string | null;
   places_json: string;
+  desktop_usages_json: string | null;
 }
 
 interface EventRow {
@@ -68,6 +71,8 @@ interface CollectorRow {
 
 interface ObservationRow {
   id: string;
+  device_id: string | null;
+  collector_id: string | null;
   source: RawObservation['source'];
   kind: ObservationKind;
   started_at: string;
@@ -75,6 +80,25 @@ interface ObservationRow {
   captured_at: string;
   quality: number;
   payload_json: string;
+}
+
+interface DeviceRow {
+  id: string;
+  device_class: DeviceRecord['deviceClass'];
+  platform: DeviceRecord['platform'];
+  label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RegisteredCollectorRow {
+  id: string;
+  device_id: string;
+  source: CollectorRecord['source'];
+  provider: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface SegmentRow {
@@ -201,7 +225,76 @@ async function migrate(database: SQLite.SQLiteDatabase) {
     currentVersion = 2;
   }
 
+  if (currentVersion === 2) {
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS devices (
+        id TEXT PRIMARY KEY NOT NULL,
+        device_class TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS registered_collectors (
+        id TEXT PRIMARY KEY NOT NULL,
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        source TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        label TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS registered_collectors_device ON registered_collectors(device_id);
+    `);
+    await ensureColumn(database, 'raw_observations', 'device_id', 'TEXT');
+    await ensureColumn(database, 'raw_observations', 'collector_id', 'TEXT');
+    await ensureColumn(database, 'day_records', 'desktop_usages_json', 'TEXT');
+    const legacyTimestamp = new Date(0).toISOString();
+    const sources = await database.getAllAsync<{ source: RawObservation['source'] }>('SELECT DISTINCT source FROM raw_observations');
+    for (const { source } of sources) {
+      const deviceId = `legacy-${source}-device`;
+      const collectorId = `legacy-${source}-collector`;
+      await database.runAsync(
+        `INSERT OR IGNORE INTO devices (id, device_class, platform, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        deviceId,
+        source === 'desktop' ? 'computer' : 'other',
+        source === 'desktop' ? 'windows' : 'unknown',
+        source === 'desktop' ? 'Legacy Windows computer' : `Legacy ${source} source`,
+        legacyTimestamp,
+        legacyTimestamp,
+      );
+      await database.runAsync(
+        `INSERT OR IGNORE INTO registered_collectors (id, device_id, source, provider, label, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        collectorId,
+        deviceId,
+        source,
+        'legacy_import',
+        `Legacy ${source} collector`,
+        legacyTimestamp,
+        legacyTimestamp,
+      );
+      await database.runAsync(
+        'UPDATE raw_observations SET device_id = COALESCE(device_id, ?), collector_id = COALESCE(collector_id, ?) WHERE source = ?',
+        deviceId,
+        collectorId,
+        source,
+      );
+    }
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS observations_device_time ON raw_observations(device_id, started_at);
+      CREATE INDEX IF NOT EXISTS observations_collector_time ON raw_observations(collector_id, started_at);
+    `);
+    currentVersion = 3;
+  }
+
   await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
+}
+
+async function ensureColumn(database: SQLite.SQLiteDatabase, table: string, column: string, definition: string) {
+  const columns = await database.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+  if (!columns.some((item) => item.name === column)) await database.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 async function insertEvent(database: SQLite.SQLiteDatabase, dayId: string, event: TimelineEvent, sortIndex: number) {
@@ -246,8 +339,8 @@ async function seedIfEmpty(database: SQLite.SQLiteDatabase, seedDays: DayRecord[
     for (const day of seedDays) {
       await transaction.runAsync(
         `INSERT INTO day_records
-          (id, weekday, day_number, month, relative_label, coverage, understood, work, movement, learning, distance, route_path, inferred_route_path, places_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, weekday, day_number, month, relative_label, coverage, understood, work, movement, learning, distance, route_path, inferred_route_path, places_json, desktop_usages_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         day.id,
         day.weekday,
         day.dayNumber,
@@ -262,6 +355,7 @@ async function seedIfEmpty(database: SQLite.SQLiteDatabase, seedDays: DayRecord[
         day.routePath,
         day.inferredRoutePath ?? null,
         JSON.stringify(day.places),
+        day.desktopUsages ? JSON.stringify(day.desktopUsages) : null,
       );
       for (const [eventIndex, event] of day.events.entries()) {
         await insertEvent(transaction, day.id, event, eventIndex);
@@ -336,6 +430,7 @@ class NativeTimelineRepository implements TimelineRepository {
       routePath: row.route_path,
       inferredRoutePath: row.inferred_route_path ?? undefined,
       places: JSON.parse(row.places_json) as DayPlace[],
+      desktopUsages: row.desktop_usages_json ? JSON.parse(row.desktop_usages_json) as DayRecord['desktopUsages'] : undefined,
       events: eventsByDay.get(row.id) ?? [],
     }));
   }
@@ -348,8 +443,8 @@ class NativeTimelineRepository implements TimelineRepository {
       await transaction.runAsync('DELETE FROM timeline_events WHERE day_id = ?', day.id);
       await transaction.runAsync(
         `INSERT OR REPLACE INTO day_records
-          (id, weekday, day_number, month, relative_label, coverage, understood, work, movement, learning, distance, route_path, inferred_route_path, places_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, weekday, day_number, month, relative_label, coverage, understood, work, movement, learning, distance, route_path, inferred_route_path, places_json, desktop_usages_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         day.id,
         day.weekday,
         day.dayNumber,
@@ -364,6 +459,7 @@ class NativeTimelineRepository implements TimelineRepository {
         day.routePath,
         day.inferredRoutePath ?? null,
         JSON.stringify(day.places),
+        day.desktopUsages ? JSON.stringify(day.desktopUsages) : null,
       );
       for (const [eventIndex, event] of day.events.entries()) await insertEvent(transaction, day.id, event, eventIndex);
     });
@@ -395,10 +491,15 @@ class NativeTimelineRepository implements TimelineRepository {
     await database.withExclusiveTransactionAsync(async (transaction) => {
       for (const observation of observations) {
         await transaction.runAsync(
-          `INSERT OR IGNORE INTO raw_observations
-            (id, source, kind, started_at, ended_at, captured_at, quality, payload_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO raw_observations
+            (id, device_id, collector_id, source, kind, started_at, ended_at, captured_at, quality, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              device_id = COALESCE(excluded.device_id, raw_observations.device_id),
+              collector_id = COALESCE(excluded.collector_id, raw_observations.collector_id)`,
           observation.id,
+          observation.deviceId ?? null,
+          observation.collectorId ?? null,
           observation.source,
           observation.kind,
           observation.startedAt,
@@ -408,6 +509,16 @@ class NativeTimelineRepository implements TimelineRepository {
           JSON.stringify(observation.payload),
         );
       }
+      await transaction.runAsync(
+        `DELETE FROM registered_collectors
+         WHERE provider = 'legacy_import'
+           AND id NOT IN (SELECT DISTINCT collector_id FROM raw_observations WHERE collector_id IS NOT NULL)`,
+      );
+      await transaction.runAsync(
+        `DELETE FROM devices
+         WHERE id LIKE 'legacy-%'
+           AND id NOT IN (SELECT DISTINCT device_id FROM raw_observations WHERE device_id IS NOT NULL)`,
+      );
     });
   }
 
@@ -418,6 +529,14 @@ class NativeTimelineRepository implements TimelineRepository {
     if (query.source) {
       clauses.push('source = ?');
       parameters.push(query.source);
+    }
+    if (query.deviceId) {
+      clauses.push('device_id = ?');
+      parameters.push(query.deviceId);
+    }
+    if (query.collectorId) {
+      clauses.push('collector_id = ?');
+      parameters.push(query.collectorId);
     }
     if (query.from) {
       clauses.push('started_at >= ?');
@@ -431,6 +550,8 @@ class NativeTimelineRepository implements TimelineRepository {
     const rows = await database.getAllAsync<ObservationRow>(`SELECT * FROM raw_observations${where} ORDER BY started_at`, parameters);
     return rows.map((row) => ({
       id: row.id,
+      deviceId: row.device_id ?? undefined,
+      collectorId: row.collector_id ?? undefined,
       source: row.source,
       kind: row.kind,
       startedAt: row.started_at,
@@ -439,6 +560,73 @@ class NativeTimelineRepository implements TimelineRepository {
       quality: row.quality,
       payload: JSON.parse(row.payload_json) as RawObservation['payload'],
     }));
+  }
+
+  async listDevices(): Promise<DeviceRecord[]> {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<DeviceRow>('SELECT * FROM devices ORDER BY label, id');
+    return rows.map((row) => ({
+      id: row.id,
+      deviceClass: row.device_class,
+      platform: row.platform,
+      label: row.label,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async upsertDevice(device: DeviceRecord) {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT INTO devices (id, device_class, platform, label, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         device_class = excluded.device_class,
+         platform = excluded.platform,
+         label = excluded.label,
+         updated_at = excluded.updated_at`,
+      device.id,
+      device.deviceClass,
+      device.platform,
+      device.label,
+      device.createdAt,
+      device.updatedAt,
+    );
+  }
+
+  async listCollectors(): Promise<CollectorRecord[]> {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<RegisteredCollectorRow>('SELECT * FROM registered_collectors ORDER BY label, id');
+    return rows.map((row) => ({
+      id: row.id,
+      deviceId: row.device_id,
+      source: row.source,
+      provider: row.provider,
+      label: row.label,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async upsertCollector(collector: CollectorRecord) {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT INTO registered_collectors (id, device_id, source, provider, label, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         device_id = excluded.device_id,
+         source = excluded.source,
+         provider = excluded.provider,
+         label = excluded.label,
+         updated_at = excluded.updated_at`,
+      collector.id,
+      collector.deviceId,
+      collector.source,
+      collector.provider,
+      collector.label,
+      collector.createdAt,
+      collector.updatedAt,
+    );
   }
 
   async replaceLocationSegments(dayId: string, segments: LocationSegmentRecord[]) {
@@ -503,11 +691,13 @@ class NativeTimelineRepository implements TimelineRepository {
 
   async getDiagnostics() {
     const database = await getDatabase();
-    const [dayRow, observationRow, correctionRow, segmentRow] = await Promise.all([
+    const [dayRow, observationRow, correctionRow, segmentRow, deviceRow, collectorRow] = await Promise.all([
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM day_records'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM raw_observations'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM event_corrections'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM location_segments'),
+      database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM devices'),
+      database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM registered_collectors'),
     ]);
     return {
       adapter: 'sqlite' as const,
@@ -516,6 +706,8 @@ class NativeTimelineRepository implements TimelineRepository {
       observationCount: observationRow?.count ?? 0,
       correctionCount: correctionRow?.count ?? 0,
       segmentCount: segmentRow?.count ?? 0,
+      deviceCount: deviceRow?.count ?? 0,
+      collectorCount: collectorRow?.count ?? 0,
     };
   }
 }

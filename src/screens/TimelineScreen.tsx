@@ -4,7 +4,7 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
 import { TimelineEventCard } from '../components/TimelineEventCard';
 import { LocationSegmentRecord, ObservationOrigin } from '../data/contracts';
-import { DayPlace, DayRecord, TimelineEvent } from '../domain/types';
+import { DayPlace, DayRecord, DesktopUsageSummary, TimelineEvent } from '../domain/types';
 import { categoryTotals } from '../fixtures/demoPeriods';
 import { KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { projectLocationSegments, projectedPath } from '../reconstruction/locationMapProjection';
@@ -111,6 +111,8 @@ function RouteMap({ day, segments, knownPlaceClustering }: { day: DayRecord; seg
 }
 
 function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: DayRecord; segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult; onOpenEvent: (event: TimelineEvent) => void }) {
+  const desktopUsages = day.desktopUsages ?? [];
+  const applicationCount = desktopUsages.reduce((total, usage) => total + usage.applications.length, 0);
   const meaningfulEvents = day.events.filter((event) => !event.evidence.some((item) => item.source === 'desktop'));
   const confirmed = meaningfulEvents.filter((event) => ['confirmed', 'corrected'].includes(event.state)).length;
   const desktopOnly = isDesktopOnlyDay(day);
@@ -142,7 +144,7 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
       {desktopOnly ? (
         <View style={styles.desktopReconstructionStrip}>
           <Text style={styles.desktopReconstructionKicker}>REAL DESKTOP LAYER</Text>
-          <Text style={styles.reconstructionText}>{day.desktopUsage?.applications.length ?? 0} intentional application{day.desktopUsage?.applications.length === 1 ? '' : 's'} grouped from foreground use · refreshes automatically while the companion runs</Text>
+          <Text style={styles.reconstructionText}>{applicationCount} intentional application{applicationCount === 1 ? '' : 's'} across {desktopUsages.length} device{desktopUsages.length === 1 ? '' : 's'} · refreshes automatically while the companion runs</Text>
         </View>
       ) : null}
 
@@ -163,7 +165,7 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
         <View style={styles.summaryStat}><Text style={styles.summaryValue}>{day.learning}</Text><Text style={styles.summaryLabel}>Learning</Text></View>
       </View>
 
-      {day.desktopUsage && day.desktopUsage.totalSeconds > 0 ? <DesktopUsagePanel usage={day.desktopUsage} /> : null}
+      {desktopUsages.some((usage) => usage.totalSeconds > 0) ? <DeviceUsageSection usages={desktopUsages} /> : null}
 
       {meaningfulEvents.length > 0 ? (
         <>
@@ -175,6 +177,35 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
         </>
       ) : null}
     </>
+  );
+}
+
+function DeviceUsageSection({ usages }: { usages: DesktopUsageSummary[] }) {
+  const [selectedDeviceId, setSelectedDeviceId] = useState(usages[0]?.deviceId ?? '');
+  const selected = usages.find((usage) => usage.deviceId === selectedDeviceId) ?? usages[0];
+  if (!selected) return null;
+  return (
+    <View>
+      {usages.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.devicePicker}>
+          {usages.map((usage) => {
+            const active = usage.deviceId === selected.deviceId;
+            return (
+              <Pressable
+                key={usage.deviceId}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => setSelectedDeviceId(usage.deviceId)}
+                style={[styles.deviceButton, active && styles.deviceButtonActive]}
+              >
+                <Text style={[styles.deviceButtonText, active && styles.deviceButtonTextActive]}>{usage.deviceLabel}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+      <DesktopUsagePanel usage={selected} />
+    </View>
   );
 }
 
@@ -327,7 +358,7 @@ function segmentOrigin(segments: LocationSegmentRecord[]): ObservationOrigin | '
 }
 
 function isDesktopOnlyDay(day: DayRecord) {
-  return day.places.length === 0 && Boolean(day.desktopUsage?.totalSeconds);
+  return day.places.length === 0 && Boolean(day.desktopUsages?.some((usage) => usage.totalSeconds > 0));
 }
 
 function relativeLabelForDay(day: DayRecord) {
@@ -367,6 +398,11 @@ function travelModeLabel(mode: LocationSegmentRecord['mode']) {
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 112 },
+  devicePicker: { gap: 8, paddingTop: 20, paddingBottom: 2 },
+  deviceButton: { borderRadius: radius.pill, borderWidth: 1, borderColor: colours.line, backgroundColor: colours.surface, paddingHorizontal: 13, paddingVertical: 8 },
+  deviceButtonActive: { borderColor: colours.ink, backgroundColor: colours.ink },
+  deviceButtonText: { color: colours.inkSoft, fontSize: 9, fontWeight: '800' },
+  deviceButtonTextActive: { color: colours.white },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   eyebrow: { color: colours.moss, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
   title: { color: colours.ink, fontSize: 29, lineHeight: 34, fontWeight: '900', letterSpacing: -0.9, marginTop: 4 },

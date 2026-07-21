@@ -36,7 +36,7 @@
     "start": "expo start",
     "start:dev-client": "expo start --dev-client",
     "desktop:collector": "node desktop/collector/collector.mjs",
-    "desktop:collector:test": "node --test desktop/app/squirrel-events.test.mjs desktop/collector/sessionizer.test.mjs desktop/connectors/huawei-health/huawei-health.test.mjs",
+    "desktop:collector:test": "node --test desktop/app/squirrel-events.test.mjs desktop/collector/device-identity.test.mjs desktop/collector/sessionizer.test.mjs desktop/connectors/huawei-health/huawei-health.test.mjs",
     "desktop:app:dev": "concurrently --kill-others \"npm run web\" \"wait-on http://localhost:8081 && electron desktop/app/main.mjs --dev\"",
     "desktop:app:package": "npm run export:web && electron-forge package",
     "desktop:app:make": "npm run export:web && electron-forge make",
