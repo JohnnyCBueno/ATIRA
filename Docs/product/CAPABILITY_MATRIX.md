@@ -11,6 +11,9 @@ ATIRA is one adaptive product. It detects available sources at runtime and chang
 | Phone app identity | Available with eligible enhanced entitlement | User-selected opaque tokens | Package identity with Usage Access | Not applicable |
 | Phone usage detail | Per-app hourly/daily/weekly aggregates | Selected thresholds; rich report display only | Usage events and aggregates | Not applicable |
 | Work application activity | Limited to phone apps | Limited to phone apps | Limited to phone apps | Foreground app intervals |
+| Device identity | Local semantic device ID | Local semantic device ID | Local semantic device ID | Local semantic device ID |
+| Known-place context | Phone location and labelled networks | Phone location and labelled networks | Phone location and labelled networks | OS location and labelled network fingerprint |
+| Passive route without installed collector | No | No | No | Tracks the laptop only |
 
 ## Normalised capability states
 
@@ -27,6 +30,8 @@ Collectors report explicit states rather than a single permission boolean:
 - `missing_coverage`
 
 Every inference records which states and observations supported it.
+
+Application totals are device-scoped by default. Public IP and MAC-address evidence may support coarse or known-network presence, but never substitutes for a phone location or usage collector.
 
 ## Minimum global experience
 

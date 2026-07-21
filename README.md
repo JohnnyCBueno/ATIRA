@@ -72,6 +72,7 @@ See [Docs/decisions/0006-windows-desktop-companion.md](Docs/decisions/0006-windo
 See [Docs/decisions/0007-desktop-activity-reconstruction.md](Docs/decisions/0007-desktop-activity-reconstruction.md) for classification, confidence, and real-day generation.
 See [Docs/decisions/0008-windows-desktop-shell.md](Docs/decisions/0008-windows-desktop-shell.md) for development, installer, and tray behavior.
 See [Docs/decisions/0009-evidence-aggregation-and-fusion.md](Docs/decisions/0009-evidence-aggregation-and-fusion.md) for cumulative digital audits, noise filtering, and cross-source interpretation rules.
+See [Docs/decisions/0010-device-and-place-context.md](Docs/decisions/0010-device-and-place-context.md) for device identity, activity/place fusion, and the limits of IP and MAC-address evidence.
 See [Docs/integrations/HUAWEI_HEALTH_SETUP.md](Docs/integrations/HUAWEI_HEALTH_SETUP.md) for the wearable connector setup boundary.
 
-See [Docs/product/PRODUCT_CHARTER.md](Docs/product/PRODUCT_CHARTER.md) and [Docs/product/CAPABILITY_MATRIX.md](Docs/product/CAPABILITY_MATRIX.md).
+See [Docs/product/DEVELOPMENT_ROADMAP.md](Docs/product/DEVELOPMENT_ROADMAP.md), [Docs/product/PRODUCT_CHARTER.md](Docs/product/PRODUCT_CHARTER.md), and [Docs/product/CAPABILITY_MATRIX.md](Docs/product/CAPABILITY_MATRIX.md).

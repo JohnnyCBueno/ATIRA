@@ -27,6 +27,8 @@ The user should feel:
 
 Raw observations, aggregate audits, and meaningful life events are separate product objects. Location supplies the primary chronology. Repeated digital activity is aggregated by application and time, while idle states and short switches remain evidence unless another source makes them meaningful.
 
+Digital activity is always device-qualified. The same application on a phone and laptop remains separate evidence unless the user explicitly requests a cross-device rollup. Device activity inherits place context through timestamped evidence, allowing ATIRA to distinguish office, home, and travel use without declaring all computer time to be work.
+
 ## Non-negotiables
 
 - A useful day must exist without manual logging.
