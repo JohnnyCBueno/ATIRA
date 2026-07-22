@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { CollectorStatus, RepositoryDiagnostics } from '../data/contracts';
-import { AppProfile, AppProfileDefinition, CapabilityItem } from '../domain/types';
+import { useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { CollectorStatus, DeviceRecord, RawObservation, RepositoryDiagnostics } from '../data/contracts';
+import { BrowserIntegrationStatus } from '../collectors/desktopCollectorClient';
+import { ActivityPurpose, AppProfile, AppProfileDefinition, CapabilityItem, DigitalActivityCategory, DigitalActivityRule } from '../domain/types';
 import { profiles } from '../fixtures/demoDay';
 import { LocationReconstructionResult } from '../reconstruction/locationEngine';
+import { classifyDigitalApplication, classifyDigitalDomain, normalizeDigitalApplication } from '../reconstruction/digitalActivityClassifier';
 import { colours, radius } from '../theme';
 
 const capabilityIcon: Record<string, string> = { location: '⌖', phone: '▯', health: '♥', desktop: '▱' };
@@ -27,23 +29,39 @@ interface Props {
   onSyncDesktopActivity: () => Promise<void>;
   onConnectHuaweiHealth: () => Promise<void>;
   onRunSyntheticReconstruction: () => Promise<LocationReconstructionResult>;
+  devices: DeviceRecord[];
+  observations: RawObservation[];
+  digitalActivityRules: DigitalActivityRule[];
+  onUpdateDeviceLabel: (deviceId: string, label: string) => Promise<void>;
+  onUpsertDigitalActivityRule: (rule: Omit<DigitalActivityRule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  onDeleteDigitalActivityRule: (id: string) => Promise<void>;
+  desktopControl: { available: boolean; paused: boolean; running: boolean };
+  onSetDesktopPaused: (paused: boolean) => Promise<void>;
+  onDeleteDesktopHistory: (range: '7d' | '30d' | 'all') => Promise<void>;
+  browserIntegration: BrowserIntegrationStatus;
+  onRequestBrowserPairingCode: () => Promise<{ code: string; expiresAt: string }>;
+  onDisconnectBrowser: () => Promise<void>;
 }
 
 const collectorLabels: Record<CollectorStatus['source'], string> = {
   location: 'Location', motion: 'Motion', calendar: 'Calendar', desktop: 'Desktop', phone: 'Phone activity', health: 'Health',
 };
 
-export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnostics, actionError, lastReconstruction, knownPlaceCount, onCaptureLocation, onEnableBackgroundLocation, onSyncDesktopActivity, onConnectHuaweiHealth, onRunSyntheticReconstruction }: Props) {
-  const [privateMode, setPrivateMode] = useState(false);
+export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnostics, actionError, lastReconstruction, knownPlaceCount, onCaptureLocation, onEnableBackgroundLocation, onSyncDesktopActivity, onConnectHuaweiHealth, onRunSyntheticReconstruction, devices, observations, digitalActivityRules, onUpdateDeviceLabel, onUpsertDigitalActivityRule, onDeleteDigitalActivityRule, desktopControl, onSetDesktopPaused, onDeleteDesktopHistory, browserIntegration, onRequestBrowserPairingCode, onDisconnectBrowser }: Props) {
   const [localProcessing, setLocalProcessing] = useState(true);
   const [quickChecks, setQuickChecks] = useState(true);
   const [locationBusy, setLocationBusy] = useState<'sample' | 'background' | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
   const [desktopBusy, setDesktopBusy] = useState(false);
   const [huaweiBusy, setHuaweiBusy] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<'7d' | '30d' | 'all' | null>(null);
+  const [browserCode, setBrowserCode] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
   const locationStatus = collectorStatuses.find((item) => item.source === 'location');
   const desktopStatus = collectorStatuses.find((item) => item.source === 'desktop');
   const healthStatus = collectorStatuses.find((item) => item.source === 'health');
+  const realSourceCount = new Set(observations.filter((observation) => observation.payload.mocked !== true).map((observation) => observation.source)).size;
 
   const runLocationAction = async (kind: 'sample' | 'background') => {
     setLocationBusy(kind);
@@ -104,15 +122,15 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
         <View style={styles.memoryRow}>
           <View style={styles.memoryStat}><Text style={styles.memoryValue}>{knownPlaceCount}</Text><Text style={styles.memoryLabel}>known places</Text></View>
           <View style={styles.memoryDivider} />
-          <View style={styles.memoryStat}><Text style={styles.memoryValue}>0</Text><Text style={styles.memoryLabel}>learned routines</Text></View>
+          <View style={styles.memoryStat}><Text style={styles.memoryValue}>{digitalActivityRules.length}</Text><Text style={styles.memoryLabel}>context rules</Text></View>
           <View style={styles.memoryDivider} />
-          <View style={styles.memoryStat}><Text style={styles.memoryValue}>6</Text><Text style={styles.memoryLabel}>data sources</Text></View>
+          <View style={styles.memoryStat}><Text style={styles.memoryValue}>{realSourceCount}</Text><Text style={styles.memoryLabel}>observed sources</Text></View>
         </View>
       </View>
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Local data foundation</Text>
-        <View style={styles.liveBadge}><Text style={styles.liveBadgeText}>{diagnostics?.adapter === 'sqlite' ? 'ENCRYPTED SQLITE' : 'WEB DEV STORE'}</Text></View>
+        <View style={styles.liveBadge}><Text style={styles.liveBadgeText}>{diagnostics?.adapter === 'sqlite' ? 'ENCRYPTED SQLITE' : diagnostics?.adapter === 'desktop-encrypted' ? 'WINDOWS ENCRYPTED' : 'WEB DEV STORE'}</Text></View>
       </View>
       <View style={styles.healthGrid}>
         <View style={styles.healthCard}><Text style={styles.healthIcon}>▤</Text><Text style={styles.healthValue}>{diagnostics?.dayCount ?? 0}</Text><Text style={styles.healthLabel}>Persisted days</Text></View>
@@ -160,6 +178,32 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
         <Text style={styles.desktopCommand}>Start in PowerShell: npm run desktop:collector</Text>
         {actionError?.startsWith('Desktop companion') ? <Text style={styles.desktopError}>{actionError}</Text> : null}
       </View>
+
+      <View style={styles.desktopCard}>
+        <View style={styles.desktopHeader}>
+          <View><Text style={styles.desktopEyebrow}>BROWSER ACTIVITY</Text><Text style={styles.desktopTitle}>One private connection for every browser</Text></View>
+          <View style={[styles.desktopState, browserIntegration.paired && styles.desktopStateOn]}><Text style={styles.desktopStateText}>{browserIntegration.paired ? `${browserIntegration.connectedBrowserCount} CONNECTED` : 'OPTIONAL'}</Text></View>
+        </View>
+        <Text style={styles.desktopDetail}>{browserIntegration.paired ? `${browserIntegration.browsers.map((item) => labelBrowser(item.browser)).join(', ')} ${browserIntegration.connectedBrowserCount === 1 ? 'is' : 'are'} securely connected.${browserIntegration.lastObservedAt ? ` Last domain interval: ${new Date(browserIntegration.lastObservedAt).toLocaleString()}.` : ' Waiting for the first completed interval.'}` : 'Connect the browsers you use. ATIRA groups each active website beneath its browser while keeping paths and content private.'}</Text>
+        <View style={styles.desktopPrivacyRow}><Text style={styles.desktopPrivacyItem}>Domain only</Text><Text style={styles.desktopPrivacyItem}>No content</Text><Text style={styles.desktopPrivacyItem}>No searches</Text><Text style={styles.desktopPrivacyItem}>No incognito</Text></View>
+        {browserCode ? <View style={styles.browserCodeBox}><Text style={styles.browserCodeLabel}>ONE-TIME CONNECTION CODE · EXPIRES IN 5 MINUTES</Text><Text selectable style={styles.browserCode}>{browserCode.code}</Text><Text style={styles.desktopCommand}>Open ATIRA Browser Activity in the browser you want to add and enter this code.</Text></View> : null}
+        <View style={styles.collectorActions}>
+          <Pressable disabled={!browserIntegration.available || browserBusy} onPress={() => { setBrowserBusy(true); void onRequestBrowserPairingCode().then(setBrowserCode).finally(() => setBrowserBusy(false)); }} style={[styles.collectorPrimary, (!browserIntegration.available || browserBusy) && styles.disabled]}>
+            <Text style={styles.collectorPrimaryText}>{browserBusy ? 'Working…' : browserIntegration.available ? browserIntegration.paired ? 'Add another browser' : 'Connect a browser' : 'Installed app required'}</Text>
+          </Pressable>
+          {browserIntegration.paired ? <Pressable disabled={browserBusy} onPress={() => { setBrowserBusy(true); void onDisconnectBrowser().then(() => setBrowserCode(null)).finally(() => setBrowserBusy(false)); }} style={styles.collectorSecondary}><Text style={styles.collectorSecondaryText}>Disconnect all</Text></Pressable> : null}
+        </View>
+        <Text style={styles.desktopCommand}>Chrome, Edge, Brave and Opera share one build. Firefox uses the Firefox build; Safari follows with the Apple companion.</Text>
+      </View>
+
+      <DeviceActivityControls
+        devices={devices}
+        observations={observations}
+        rules={digitalActivityRules}
+        onUpdateDeviceLabel={onUpdateDeviceLabel}
+        onUpsertRule={onUpsertDigitalActivityRule}
+        onDeleteRule={onDeleteDigitalActivityRule}
+      />
 
       <View style={styles.huaweiCard}>
         <View style={styles.desktopHeader}>
@@ -244,17 +288,21 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
         );
       })}
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Privacy by default</Text>
-        <Text style={styles.demoBadge}>CONTROL PREVIEW</Text>
-      </View>
-      <Text style={styles.helper}>These broader controls are still interface previews; location permission and repository persistence above are now functional.</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Privacy by default</Text>
+          <Text style={styles.demoBadge}>{desktopControl.available ? 'WINDOWS LIVE' : 'CONTROL PREVIEW'}</Text>
+        </View>
+      <Text style={styles.helper}>Windows pause and deletion controls are live in the installed app. Other platform controls remain capability previews.</Text>
       <View style={styles.settingsCard}>
         <SettingToggle
           title="Private mode"
-          detail="Pause observation until you turn it back on"
-          value={privateMode}
-          onPress={() => setPrivateMode((value) => !value)}
+          detail={desktopControl.available ? 'Pause the installed Windows collector until you resume it' : 'Available in the installed Windows app'}
+          value={desktopControl.paused}
+          onPress={() => {
+            if (!desktopControl.available || privacyBusy) return;
+            setPrivacyBusy(true);
+            void onSetDesktopPaused(!desktopControl.paused).finally(() => setPrivacyBusy(false));
+          }}
         />
         <SettingToggle
           title="Process raw signals locally"
@@ -273,14 +321,153 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
 
       <View style={styles.controlCard}>
         <View style={styles.controlHeading}><Text style={styles.controlIcon}>◉</Text><Text style={styles.controlTitle}>Your controls</Text></View>
-        <View style={styles.controlRow}><Text style={styles.controlLabel}>Pause collection</Text><Text style={styles.controlAction}>Open ›</Text></View>
-        <View style={styles.controlRow}><Text style={styles.controlLabel}>Review private memory</Text><Text style={styles.controlAction}>Open ›</Text></View>
-        <View style={styles.controlRow}><Text style={styles.controlLabel}>Export or delete data</Text><Text style={styles.controlAction}>Open ›</Text></View>
+        <Pressable disabled={!desktopControl.available || privacyBusy} onPress={() => { setPrivacyBusy(true); void onSetDesktopPaused(!desktopControl.paused).finally(() => setPrivacyBusy(false)); }} style={styles.controlRow}><Text style={styles.controlLabel}>{desktopControl.paused ? 'Resume Windows collection' : 'Pause Windows collection'}</Text><Text style={styles.controlAction}>{desktopControl.available ? desktopControl.paused ? 'Resume' : 'Pause' : 'Installed app only'}</Text></Pressable>
+        {(['7d', '30d', 'all'] as const).map((range) => (
+          <Pressable key={range} disabled={!desktopControl.available || privacyBusy} onPress={() => setPendingDelete(range)} style={styles.controlRow}><Text style={styles.controlLabel}>Delete {range === 'all' ? 'all desktop history' : `the last ${range === '7d' ? '7' : '30'} days`}</Text><Text style={styles.deleteAction}>Delete</Text></Pressable>
+        ))}
+        {pendingDelete && <View style={styles.deleteConfirm}><Text style={styles.deleteConfirmText}>This permanently removes matching raw desktop sessions and their derived summaries from ATIRA.</Text><View style={styles.ruleActions}><Pressable onPress={() => { const range = pendingDelete; setPendingDelete(null); setPrivacyBusy(true); void onDeleteDesktopHistory(range).finally(() => setPrivacyBusy(false)); }} style={styles.deleteConfirmButton}><Text style={styles.deleteConfirmButtonText}>Confirm deletion</Text></Pressable><Pressable onPress={() => setPendingDelete(null)} style={styles.ruleResetButton}><Text style={styles.ruleResetText}>Cancel</Text></Pressable></View></View>}
       </View>
       <Text style={styles.footer}>ATIRA is designed to explain its conclusions, invite correction, and degrade honestly when a signal is unavailable.</Text>
     </ScrollView>
   );
 }
+
+function DeviceActivityControls({ devices, observations, rules, onUpdateDeviceLabel, onUpsertRule, onDeleteRule }: {
+  devices: DeviceRecord[];
+  observations: RawObservation[];
+  rules: DigitalActivityRule[];
+  onUpdateDeviceLabel: (deviceId: string, label: string) => Promise<void>;
+  onUpsertRule: (rule: Omit<DigitalActivityRule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  onDeleteRule: (id: string) => Promise<void>;
+}) {
+  const digitalDevices = useMemo(() => devices.filter((device) => ['computer', 'phone', 'tablet'].includes(device.deviceClass)
+    || observations.some((observation) => observation.deviceId === device.id && ['desktop_foreground', 'app_foreground', 'browser_foreground'].includes(observation.kind))), [devices, observations]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(() => digitalDevices.find((device) => device.deviceClass === 'computer' && !device.id.startsWith('legacy-'))?.id
+    ?? digitalDevices.find((device) => device.deviceClass === 'computer')?.id
+    ?? digitalDevices[0]?.id
+    ?? '');
+  const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
+  const selectedDevice = digitalDevices.find((device) => device.id === selectedDeviceId)
+    ?? digitalDevices.find((device) => device.deviceClass === 'computer' && !device.id.startsWith('legacy-'))
+    ?? digitalDevices.find((device) => device.deviceClass === 'computer')
+    ?? digitalDevices[0];
+  const applications = useMemo(() => {
+    if (!selectedDevice) return [];
+    const byId = new Map<string, { applicationId: string; rawName: string; sessionCount: number }>();
+    for (const observation of observations) {
+      if (observation.deviceId !== selectedDevice.id || !['desktop_foreground', 'app_foreground', 'browser_foreground'].includes(observation.kind)) continue;
+      const domain = observation.kind === 'browser_foreground' && typeof observation.payload.domain === 'string' ? observation.payload.domain : '';
+      const rawName = typeof observation.payload.application === 'string' ? observation.payload.application : '';
+      const applicationId = domain ? `web:${domain}` : normalizeDigitalApplication(rawName);
+      if (!applicationId) continue;
+      const current = byId.get(applicationId) ?? { applicationId, rawName: domain || rawName, sessionCount: 0 };
+      current.sessionCount += 1;
+      byId.set(applicationId, current);
+    }
+    return [...byId.values()].map((item) => ({
+      ...item,
+      classification: item.applicationId.startsWith('web:') ? classifyDigitalDomain(item.rawName, selectedDevice.id, rules) : classifyDigitalApplication(item.rawName, selectedDevice.id, rules),
+    })).filter((item) => !['atira', 'electron'].includes(item.applicationId)).sort((a, b) => b.sessionCount - a.sessionCount);
+  }, [observations, rules, selectedDevice]);
+  const selectedApplication = applications.find((item) => item.applicationId === selectedApplicationId) ?? null;
+
+  if (!selectedDevice) return null;
+  return (
+    <View style={styles.deviceManagementCard}>
+      <View style={styles.desktopHeader}>
+        <View><Text style={styles.managementEyebrow}>DEVICES & INTERPRETATION</Text><Text style={styles.desktopTitle}>Teach ATIRA your context</Text></View>
+        <Text style={styles.ruleCount}>{rules.length} RULE{rules.length === 1 ? '' : 'S'}</Text>
+      </View>
+      <Text style={styles.desktopDetail}>Raw sessions stay unchanged. These device-specific rules alter only how activity is labelled and summarised.</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.deviceStrip}>
+        {digitalDevices.map((device) => (
+          <Pressable key={device.id} onPress={() => { setSelectedDeviceId(device.id); setSelectedApplicationId(null); }} style={[styles.deviceChip, device.id === selectedDevice.id && styles.deviceChipSelected]}>
+            <Text style={[styles.deviceChipText, device.id === selectedDevice.id && styles.deviceChipTextSelected]}>{device.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <DeviceLabelEditor key={`${selectedDevice.id}:${selectedDevice.label}`} device={selectedDevice} onSave={onUpdateDeviceLabel} />
+      <Text style={styles.managementLabel}>DETECTED APPLICATIONS & ACTIVE SITES</Text>
+      <View style={styles.applicationList}>
+        {applications.length === 0 ? <Text style={styles.managementEmpty}>No complete application sessions have been observed on this device yet.</Text> : applications.slice(0, 25).map((application) => {
+          const selected = selectedApplication?.applicationId === application.applicationId;
+          return (
+            <Pressable key={application.applicationId} onPress={() => setSelectedApplicationId(selected ? null : application.applicationId)} style={[styles.applicationRow, selected && styles.applicationRowSelected]}>
+              <View style={styles.applicationCopy}><Text style={styles.applicationName}>{application.classification.applicationName}</Text><Text style={styles.applicationMeta}>{labelWords(application.classification.category)} · {labelWords(application.classification.purpose)} · {application.sessionCount} raw session{application.sessionCount === 1 ? '' : 's'}</Text></View>
+              <Text style={[styles.applicationRuleState, application.classification.provenance === 'user_rule' && styles.applicationRuleStateUser]}>{application.classification.excluded ? 'EXCLUDED' : application.classification.provenance === 'user_rule' ? 'YOUR RULE' : application.classification.provenance === 'unclassified' ? 'NEEDS CONTEXT' : 'DEFAULT'}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {selectedApplication && (
+        <ApplicationRuleEditor
+          key={`${selectedDevice.id}:${selectedApplication.applicationId}:${rules.find((rule) => rule.deviceId === selectedDevice.id && rule.applicationId === selectedApplication.applicationId)?.updatedAt ?? 'default'}`}
+          deviceId={selectedDevice.id}
+          applicationId={selectedApplication.applicationId}
+          applicationName={selectedApplication.classification.applicationName}
+          defaultCategory={selectedApplication.classification.category}
+          defaultPurpose={selectedApplication.classification.purpose}
+          rule={rules.find((rule) => rule.deviceId === selectedDevice.id && rule.applicationId === selectedApplication.applicationId)}
+          onSave={onUpsertRule}
+          onReset={onDeleteRule}
+        />
+      )}
+    </View>
+  );
+}
+
+function DeviceLabelEditor({ device, onSave }: { device: DeviceRecord; onSave: (deviceId: string, label: string) => Promise<void> }) {
+  const [label, setLabel] = useState(device.label);
+  const [busy, setBusy] = useState(false);
+  return (
+    <View style={styles.labelEditor}>
+      <TextInput accessibilityLabel="Device name" value={label} onChangeText={setLabel} style={styles.labelInput} />
+      <Pressable disabled={busy || !label.trim() || label.trim() === device.label} onPress={() => { setBusy(true); void onSave(device.id, label).finally(() => setBusy(false)); }} style={[styles.smallSaveButton, (busy || !label.trim() || label.trim() === device.label) && styles.disabled]}><Text style={styles.smallSaveText}>{busy ? 'Saving…' : 'Rename'}</Text></Pressable>
+    </View>
+  );
+}
+
+function ApplicationRuleEditor({ deviceId, applicationId, applicationName, defaultCategory, defaultPurpose, rule, onSave, onReset }: {
+  deviceId: string;
+  applicationId: string;
+  applicationName: string;
+  defaultCategory: DigitalActivityCategory;
+  defaultPurpose: ActivityPurpose;
+  rule?: DigitalActivityRule;
+  onSave: (rule: Omit<DigitalActivityRule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  onReset: (id: string) => Promise<void>;
+}) {
+  const [alias, setAlias] = useState(rule?.alias ?? '');
+  const [category, setCategory] = useState<DigitalActivityCategory>(rule?.category ?? defaultCategory);
+  const [purpose, setPurpose] = useState<ActivityPurpose>(rule?.purpose ?? defaultPurpose);
+  const [excluded, setExcluded] = useState(rule?.excluded ?? false);
+  const [busy, setBusy] = useState(false);
+  const categories: DigitalActivityCategory[] = ['creation', 'communication', 'learning', 'entertainment', 'browser', 'ai_assistance', 'other'];
+  const purposes: ActivityPurpose[] = ['work', 'learning', 'personal', 'unknown'];
+  const save = async () => {
+    setBusy(true);
+    try { await onSave({ deviceId, applicationId, alias: alias.trim() || undefined, category, purpose, excluded }); } finally { setBusy(false); }
+  };
+  return (
+    <View style={styles.ruleEditor}>
+      <Text style={styles.ruleEditorTitle}>Interpret {applicationName} on this device</Text>
+      <Text style={styles.ruleEditorHelp}>This does not rewrite the raw observation. It creates a reversible interpretation rule.</Text>
+      <TextInput accessibilityLabel="Application alias" value={alias} onChangeText={setAlias} placeholder={`Display as ${applicationName}`} placeholderTextColor={colours.inkSoft} style={styles.ruleInput} />
+      <Text style={styles.ruleFieldLabel}>CATEGORY</Text>
+      <View style={styles.ruleOptions}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.ruleOption, item === category && styles.ruleOptionSelected]}><Text style={[styles.ruleOptionText, item === category && styles.ruleOptionTextSelected]}>{labelWords(item)}</Text></Pressable>)}</View>
+      <Text style={styles.ruleFieldLabel}>PURPOSE</Text>
+      <View style={styles.ruleOptions}>{purposes.map((item) => <Pressable key={item} onPress={() => setPurpose(item)} style={[styles.ruleOption, item === purpose && styles.ruleOptionSelected]}><Text style={[styles.ruleOptionText, item === purpose && styles.ruleOptionTextSelected]}>{labelWords(item)}</Text></Pressable>)}</View>
+      <Pressable onPress={() => setExcluded((value) => !value)} style={styles.excludeRow}><View style={[styles.checkBox, excluded && styles.checkBoxOn]}><Text style={styles.checkMark}>{excluded ? '✓' : ''}</Text></View><View><Text style={styles.excludeTitle}>Exclude from meaningful usage</Text><Text style={styles.excludeDetail}>Raw sessions remain stored and can be restored by resetting this rule.</Text></View></Pressable>
+      <View style={styles.ruleActions}>
+        <Pressable disabled={busy} onPress={() => void save()} style={[styles.ruleSaveButton, busy && styles.disabled]}><Text style={styles.ruleSaveText}>{busy ? 'Saving…' : 'Save rule'}</Text></Pressable>
+        {rule && <Pressable disabled={busy} onPress={() => { setBusy(true); void onReset(rule.id).finally(() => setBusy(false)); }} style={styles.ruleResetButton}><Text style={styles.ruleResetText}>Reset to default</Text></Pressable>}
+      </View>
+    </View>
+  );
+}
+
+function labelWords(value: string) { return value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()); }
+function labelBrowser(value: string) { return ({ chrome: 'Chrome', edge: 'Edge', brave: 'Brave', opera: 'Opera', firefox: 'Firefox', safari: 'Safari' } as Record<string, string>)[value] ?? 'Browser'; }
 
 function SettingToggle({ title, detail, value, onPress, last = false }: { title: string; detail: string; value: boolean; onPress: () => void; last?: boolean }) {
   return (
@@ -346,7 +533,53 @@ const styles = StyleSheet.create({
   desktopButton: { minHeight: 42, borderRadius: 13, backgroundColor: colours.blue, alignItems: 'center', justifyContent: 'center', marginTop: 13 },
   desktopButtonText: { color: colours.white, fontSize: 10, fontWeight: '900' },
   desktopCommand: { color: colours.inkSoft, fontSize: 8, textAlign: 'center', marginTop: 8 },
+  browserCodeBox: { backgroundColor: colours.surfaceMuted, borderRadius: 13, padding: 13, alignItems: 'center', marginTop: 13 },
+  browserCodeLabel: { color: colours.inkSoft, fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  browserCode: { color: colours.ink, fontSize: 25, fontWeight: '900', letterSpacing: 6, marginTop: 6 },
   desktopError: { color: '#A1432C', fontSize: 9, lineHeight: 14, marginTop: 8 },
+  deviceManagementCard: { backgroundColor: colours.surface, borderRadius: radius.large, padding: 18, marginTop: 13, borderWidth: 1, borderColor: colours.line },
+  managementEyebrow: { color: colours.moss, fontSize: 8, fontWeight: '900', letterSpacing: 1.2 },
+  ruleCount: { color: colours.moss, backgroundColor: colours.mossSoft, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 5, fontSize: 7, fontWeight: '900', overflow: 'hidden' },
+  deviceStrip: { gap: 7, paddingVertical: 13 },
+  deviceChip: { borderRadius: radius.pill, borderWidth: 1, borderColor: colours.line, paddingHorizontal: 11, paddingVertical: 8 },
+  deviceChipSelected: { backgroundColor: colours.ink, borderColor: colours.ink },
+  deviceChipText: { color: colours.inkSoft, fontSize: 9, fontWeight: '800' },
+  deviceChipTextSelected: { color: colours.white },
+  labelEditor: { flexDirection: 'row', gap: 7, marginBottom: 15 },
+  labelInput: { flex: 1, minHeight: 39, borderWidth: 1, borderColor: colours.line, borderRadius: 11, paddingHorizontal: 11, color: colours.ink, fontSize: 10, backgroundColor: colours.canvas },
+  smallSaveButton: { minWidth: 72, minHeight: 39, borderRadius: 11, backgroundColor: colours.moss, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11 },
+  smallSaveText: { color: colours.white, fontSize: 9, fontWeight: '900' },
+  managementLabel: { color: colours.inkSoft, fontSize: 7, fontWeight: '900', letterSpacing: 1.1, marginBottom: 5 },
+  applicationList: { borderWidth: 1, borderColor: colours.line, borderRadius: radius.medium, overflow: 'hidden' },
+  applicationRow: { minHeight: 53, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#EEEAE3' },
+  applicationRowSelected: { backgroundColor: colours.mossSoft },
+  applicationCopy: { flex: 1 },
+  applicationName: { color: colours.ink, fontSize: 10, fontWeight: '900' },
+  applicationMeta: { color: colours.inkSoft, fontSize: 7, marginTop: 3 },
+  applicationRuleState: { color: colours.inkSoft, fontSize: 6, fontWeight: '900', letterSpacing: 0.4 },
+  applicationRuleStateUser: { color: colours.moss },
+  managementEmpty: { color: colours.inkSoft, fontSize: 9, lineHeight: 14, padding: 13 },
+  ruleEditor: { backgroundColor: colours.canvas, borderRadius: radius.medium, padding: 14, marginTop: 10, borderWidth: 1, borderColor: colours.line },
+  ruleEditorTitle: { color: colours.ink, fontSize: 13, fontWeight: '900' },
+  ruleEditorHelp: { color: colours.inkSoft, fontSize: 8, lineHeight: 13, marginTop: 4 },
+  ruleInput: { minHeight: 39, borderWidth: 1, borderColor: colours.line, borderRadius: 11, paddingHorizontal: 11, color: colours.ink, fontSize: 10, backgroundColor: colours.surface, marginTop: 12 },
+  ruleFieldLabel: { color: colours.inkSoft, fontSize: 7, fontWeight: '900', letterSpacing: 1, marginTop: 13, marginBottom: 6 },
+  ruleOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  ruleOption: { borderRadius: radius.pill, backgroundColor: colours.surface, borderWidth: 1, borderColor: colours.line, paddingHorizontal: 9, paddingVertical: 6 },
+  ruleOptionSelected: { backgroundColor: colours.ink, borderColor: colours.ink },
+  ruleOptionText: { color: colours.inkSoft, fontSize: 7, fontWeight: '800' },
+  ruleOptionTextSelected: { color: colours.white },
+  excludeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14 },
+  checkBox: { width: 19, height: 19, borderWidth: 1, borderColor: colours.line, borderRadius: 6, marginRight: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colours.surface },
+  checkBoxOn: { backgroundColor: colours.coral, borderColor: colours.coral },
+  checkMark: { color: colours.white, fontSize: 10, fontWeight: '900' },
+  excludeTitle: { color: colours.ink, fontSize: 9, fontWeight: '900' },
+  excludeDetail: { color: colours.inkSoft, fontSize: 7, marginTop: 2 },
+  ruleActions: { flexDirection: 'row', gap: 7, marginTop: 14 },
+  ruleSaveButton: { minHeight: 38, backgroundColor: colours.moss, borderRadius: 11, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center' },
+  ruleSaveText: { color: colours.white, fontSize: 9, fontWeight: '900' },
+  ruleResetButton: { minHeight: 38, borderWidth: 1, borderColor: colours.line, borderRadius: 11, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center' },
+  ruleResetText: { color: colours.inkSoft, fontSize: 9, fontWeight: '800' },
   huaweiCard: { backgroundColor: colours.surface, borderRadius: radius.large, padding: 17, marginTop: 10, borderWidth: 1, borderColor: '#D8E3DA' },
   huaweiEyebrow: { color: colours.moss, fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
   huaweiDataItem: { color: colours.moss, fontSize: 7, fontWeight: '800', backgroundColor: colours.mossSoft, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 5 },
@@ -405,5 +638,10 @@ const styles = StyleSheet.create({
   controlRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#EEEAE3', paddingVertical: 14 },
   controlLabel: { color: colours.ink, fontSize: 12, fontWeight: '700' },
   controlAction: { color: colours.moss, fontSize: 11, fontWeight: '800' },
+  deleteAction: { color: colours.coral, fontSize: 11, fontWeight: '800' },
+  deleteConfirm: { backgroundColor: '#FBE9E3', borderRadius: radius.medium, padding: 13, marginBottom: 12 },
+  deleteConfirmText: { color: '#7A3524', fontSize: 9, lineHeight: 14 },
+  deleteConfirmButton: { minHeight: 38, backgroundColor: colours.coral, borderRadius: 11, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center' },
+  deleteConfirmButtonText: { color: colours.white, fontSize: 9, fontWeight: '900' },
   footer: { color: colours.inkSoft, fontSize: 10, lineHeight: 16, textAlign: 'center', margin: 20 },
 });

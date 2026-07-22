@@ -29,8 +29,9 @@ Captured by default:
 - active, idle, or locked state;
 - session start and end time;
 - sample count and maximum observed idle duration.
+- internal interactive/passive/away/locked duration totals used by the insight engine;
 
-Not captured by default:
+Not captured by the process collector:
 
 - window titles;
 - screenshots;
@@ -38,16 +39,20 @@ Not captured by default:
 - document contents;
 - browser URLs.
 
+The optional `desktop/browser-extension` collector adds only the active tab's hostname. It explicitly strips URL paths, query strings, page titles, content, searches, and background tabs, and does not run in incognito mode. Chromium browsers share one build; Firefox uses the generated Firefox manifest. Multiple browser installations pair independently to the loopback companion, which persists only encrypted token hashes.
+
 Window-title collection exists only as an explicit developer flag and is not used by the app. Do not enable it with personal data during prototype testing.
 
-The development companion stores completed sessions in `desktop/data/observations.ndjson`. That folder is excluded from git, but the file is plaintext. A distributable release must replace it with an encrypted store whose key is protected by Windows, and must add pause, retention, export, and deletion controls.
+The standalone development command stores completed sessions in `desktop/data/observations.ndjson`. That folder is excluded from git, but the file is plaintext and must not be treated as release storage.
+
+The packaged Windows shell supplies a random 256-bit key whose persisted form is protected by Windows DPAPI through Electron `safeStorage`. In that runtime, collector sessions are written as AES-256-GCM records in `observations.atira`; an existing plaintext development file is imported, encrypted, and removed after the encrypted rewrite succeeds. The packaged renderer also uses an encrypted main-process repository instead of browser `localStorage`.
 
 The same directory contains `identity.json`, which holds random installation-specific device and collector IDs plus the friendly label shown in ATIRA. It contains no MAC address, hostname, or hardware serial. Existing observations are associated with this identity when the companion loads them; new observation IDs are also namespaced by device.
 
 ## Current limitations
 
-- It is started manually from PowerShell and is not yet a packaged tray app or startup service.
-- Automatic import runs only while ATIRA is open; a packaged background sync process is still required for the distributable desktop app.
-- Process-level sessions are reconstructed into timeline events, but browsers and general-purpose AI tools remain deliberately ambiguous without a separately consented domain or window-context signal.
+- The standalone development command is started manually from PowerShell; the packaged shell starts and owns the collector and keeps it alive from the system tray.
+- Automatic import runs every 30 seconds while the ATIRA renderer is open. The owned collector continues gathering sessions while the window is hidden to the tray.
+- Process-level sessions are reconstructed into timeline events. The optional extension supplies separately consented domain-only context, while general-purpose AI tools remain deliberately neutral without stronger evidence or a user rule.
 - The API binds only to `127.0.0.1` and accepts the local Expo web origins. Phone-to-PC pairing is a later authenticated LAN/sync milestone.
 - This implementation is Windows-only. A macOS collector will need native macOS development and testing, while Apple Watch health signals should normally enter through HealthKit rather than a separate desktop collector.

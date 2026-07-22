@@ -1,10 +1,11 @@
-import { app, BrowserWindow, Menu, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, safeStorage, shell, Tray } from 'electron';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEncryptedObservations, rewriteEncryptedObservations } from '../collector/encrypted-observation-store.mjs';
 import { squirrelEventAction } from './squirrel-events.mjs';
 
 const squirrelEventHandled = handleSquirrelEvent();
@@ -38,7 +39,9 @@ if (!squirrelEventHandled) {
   });
 
   app.whenReady().then(async () => {
+    registerDesktopBridge();
     if (!isDevelopment) staticServer = await startStaticServer(path.join(appRoot, 'dist'), 43124);
+    collectorPaused = await readCollectorPauseState();
     await startCollector();
     createTray();
     createWindow();
@@ -61,6 +64,7 @@ function createWindow() {
     icon: iconPath,
     show: false,
     webPreferences: {
+      preload: path.join(appRoot, 'desktop', 'app', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -103,6 +107,7 @@ function rebuildTrayMenu() {
       label: collectionLabel,
       click: async () => {
         collectorPaused = !collectorPaused;
+        await writeCollectorPauseState(collectorPaused);
         if (collectorPaused) await stopCollector();
         else await startCollector();
         rebuildTrayMenu();
@@ -119,9 +124,10 @@ async function startCollector() {
   if (await companionIsRunning()) return;
   const collectorPath = path.join(appRoot, 'desktop', 'collector', 'collector.mjs');
   const dataDirectory = path.join(app.getPath('userData'), 'collector');
+  const encryptionKey = await loadOrCreateCollectorKey();
   collectorControlToken = randomBytes(32).toString('base64url');
   collectorProcess = spawn(process.execPath, [collectorPath, '--data-dir', dataDirectory, '--control-token', collectorControlToken], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ATIRA_COLLECTOR_ENCRYPTION_KEY: encryptionKey },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -132,6 +138,135 @@ async function startCollector() {
     collectorControlToken = null;
     rebuildTrayMenu();
   });
+}
+
+function registerDesktopBridge() {
+  ipcMain.handle('repository:read', () => readEncryptedRepository());
+  ipcMain.handle('repository:write', (_event, state) => writeEncryptedRepository(state));
+  ipcMain.handle('collector:status', () => ({ paused: collectorPaused, running: Boolean(collectorProcess) }));
+  ipcMain.handle('collector:set-paused', async (_event, paused) => {
+    collectorPaused = Boolean(paused);
+    await writeCollectorPauseState(collectorPaused);
+    if (collectorPaused) await stopCollector();
+    else await startCollector();
+    rebuildTrayMenu();
+    return { paused: collectorPaused, running: Boolean(collectorProcess) };
+  });
+  ipcMain.handle('collector:delete', async (_event, range) => {
+    if (!['7d', '30d', 'all'].includes(range)) throw new Error('Unsupported deletion range.');
+    if (collectorProcess && collectorControlToken) {
+      const response = await fetch('http://127.0.0.1:43123/control/delete', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${collectorControlToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ range }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) throw new Error(`Collector deletion returned ${response.status}.`);
+      return response.json();
+    }
+    return deletePackagedCollectorHistory(range);
+  });
+  ipcMain.handle('collector:browser-pairing-code', () => collectorControlRequest('/control/browser-pairing-code'));
+  ipcMain.handle('collector:browser-unpair', () => collectorControlRequest('/control/browser-unpair'));
+}
+
+async function collectorControlRequest(pathname) {
+  if (!collectorProcess || !collectorControlToken) throw new Error('The Windows collector is not running.');
+  const response = await fetch(`http://127.0.0.1:43123${pathname}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${collectorControlToken}` },
+    signal: AbortSignal.timeout(3000),
+  });
+  if (!response.ok) throw new Error(`Collector control returned ${response.status}.`);
+  return response.json();
+}
+
+async function deletePackagedCollectorHistory(range) {
+  const collectorDirectory = path.join(app.getPath('userData'), 'collector');
+  const observationPath = path.join(collectorDirectory, 'observations.atira');
+  const key = Buffer.from(await loadOrCreateCollectorKey(), 'hex');
+  let observations;
+  try {
+    observations = await loadEncryptedObservations(observationPath, key);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return { deleted: 0 };
+    throw error;
+  }
+  const cutoff = range === 'all'
+    ? Number.POSITIVE_INFINITY
+    : Date.now() - (range === '7d' ? 7 : 30) * 86_400_000;
+  const retained = observations.filter((item) => range !== 'all' && Date.parse(item.startedAt) < cutoff);
+  await rewriteEncryptedObservations(observationPath, retained, key);
+  return { deleted: observations.length - retained.length };
+}
+
+async function readEncryptedRepository() {
+  const repositoryPath = path.join(app.getPath('userData'), 'repository.atira');
+  try {
+    const encoded = await readFile(repositoryPath, 'utf8');
+    const payload = Buffer.from(encoded, 'base64');
+    const key = Buffer.from(await loadOrCreateProtectedKey('repository-key.atira'), 'hex');
+    const nonce = payload.subarray(0, 12);
+    const tag = payload.subarray(12, 28);
+    const ciphertext = payload.subarray(28);
+    const decipher = createDecipheriv('aes-256-gcm', key, nonce);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+    return JSON.parse(decrypted);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function writeEncryptedRepository(state) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows protected storage is unavailable.');
+  const repositoryPath = path.join(app.getPath('userData'), 'repository.atira');
+  const key = Buffer.from(await loadOrCreateProtectedKey('repository-key.atira'), 'hex');
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(state), 'utf8'), cipher.final()]);
+  const encrypted = Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64');
+  await writeFile(repositoryPath, encrypted, { encoding: 'utf8', mode: 0o600 });
+}
+
+async function loadOrCreateCollectorKey() {
+  return loadOrCreateProtectedKey('collector-key.atira', 'collector');
+}
+
+async function readCollectorPauseState() {
+  const settingsPath = path.join(app.getPath('userData'), 'collector-settings.atira');
+  try {
+    const encoded = await readFile(settingsPath, 'utf8');
+    return safeStorage.decryptString(Buffer.from(encoded, 'base64')) === 'paused';
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function writeCollectorPauseState(paused) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows protected storage is unavailable.');
+  const settingsPath = path.join(app.getPath('userData'), 'collector-settings.atira');
+  const protectedValue = safeStorage.encryptString(paused ? 'paused' : 'running').toString('base64');
+  await writeFile(settingsPath, protectedValue, { encoding: 'utf8', mode: 0o600 });
+}
+
+async function loadOrCreateProtectedKey(fileName, directoryName = '') {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows protected storage is unavailable.');
+  const dataDirectory = path.join(app.getPath('userData'), directoryName);
+  const keyPath = path.join(dataDirectory, fileName);
+  await mkdir(dataDirectory, { recursive: true });
+  try {
+    const encoded = await readFile(keyPath, 'utf8');
+    return safeStorage.decryptString(Buffer.from(encoded, 'base64'));
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  const key = randomBytes(32).toString('hex');
+  const protectedKey = safeStorage.encryptString(key).toString('base64');
+  await writeFile(keyPath, protectedKey, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  return key;
 }
 
 async function stopCollector() {

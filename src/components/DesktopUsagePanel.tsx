@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DesktopUsageApplication, DesktopUsageSummary, DigitalActivityCategory } from '../domain/types';
 import { colours, radius } from '../theme';
+import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
 
 const categoryMeta: Record<DigitalActivityCategory, { label: string; colour: string; soft: string }> = {
   creation: { label: 'Creation', colour: colours.moss, soft: colours.mossSoft },
@@ -26,9 +27,10 @@ interface TwoHourBucket {
 export function DesktopUsagePanel({ usage }: Props) {
   const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
   const buckets = useMemo(() => twoHourBuckets(usage), [usage]);
+  const displayApplications = useMemo(() => groupApplicationsForDisplay(usage.applications), [usage.applications]);
   const maxBucketSeconds = Math.max(1, ...buckets.map((bucket) => bucket.totalSeconds));
   const categoryTotals = useMemo(() => aggregateCategories(usage), [usage]);
-  const maximumApplicationSeconds = Math.max(1, usage.applications[0]?.durationSeconds ?? 1);
+  const maximumApplicationSeconds = Math.max(1, ...displayApplications.map((item) => item.application.durationSeconds));
 
   return (
     <View>
@@ -79,11 +81,11 @@ export function DesktopUsagePanel({ usage }: Props) {
       </View>
 
       <View style={styles.listHeader}>
-        <View><Text style={styles.listTitle}>Most used</Text><Text style={styles.listSubtitle}>{usage.applications.length} intentional application{usage.applications.length === 1 ? '' : 's'} detected</Text></View>
+        <View><Text style={styles.listTitle}>Most used</Text><Text style={styles.listSubtitle}>{displayApplications.length} intentional application{displayApplications.length === 1 ? '' : 's'} detected</Text></View>
         <Text style={styles.listHint}>SELECT FOR TIMES</Text>
       </View>
       <View style={styles.appList}>
-        {usage.applications.map((application, index) => {
+        {displayApplications.map(({ application, browserSites, unclassifiedBrowser }, index) => {
           const expanded = application.applicationId === expandedApplicationId;
           return (
             <View key={application.applicationId}>
@@ -91,10 +93,13 @@ export function DesktopUsagePanel({ usage }: Props) {
                 application={application}
                 maximumSeconds={maximumApplicationSeconds}
                 expanded={expanded}
-                isLast={index === usage.applications.length - 1}
+                isLast={index === displayApplications.length - 1}
+                detail={browserSites.length > 0 ? `Browser · ${browserSites.length} active site${browserSites.length === 1 ? '' : 's'} · ${formatDuration(browserSites.reduce((total, site) => total + site.durationSeconds, 0))} classified` : undefined}
                 onPress={() => setExpandedApplicationId(expanded ? null : application.applicationId)}
               />
-              {expanded ? <ApplicationSessions application={application} /> : null}
+              {expanded ? browserSites.length > 0
+                ? <BrowserBreakdown browserName={application.applicationName} sites={browserSites} unclassified={unclassifiedBrowser} />
+                : <ApplicationSessions application={application} /> : null}
             </View>
           );
         })}
@@ -104,11 +109,12 @@ export function DesktopUsagePanel({ usage }: Props) {
   );
 }
 
-function ApplicationRow({ application, maximumSeconds, expanded, isLast, onPress }: {
+function ApplicationRow({ application, maximumSeconds, expanded, isLast, detail, onPress }: {
   application: DesktopUsageApplication;
   maximumSeconds: number;
   expanded: boolean;
   isLast: boolean;
+  detail?: string;
   onPress: () => void;
 }) {
   const meta = categoryMeta[application.category];
@@ -123,11 +129,41 @@ function ApplicationRow({ application, maximumSeconds, expanded, isLast, onPress
       <View style={[styles.appIcon, { backgroundColor: meta.soft }]}><Text style={[styles.appIconText, { color: meta.colour }]}>{application.applicationName[0]}</Text></View>
       <View style={styles.appCopy}>
         <View style={styles.appNameRow}><Text style={styles.appName}>{application.applicationName}</Text><Text style={styles.appDuration}>{formatDuration(application.durationSeconds)}</Text></View>
-        <Text style={styles.appCategory}>{meta.label}</Text>
+        <Text style={styles.appCategory}>{detail ?? `${meta.label.split(' · ')[0]} · ${application.purpose === 'unknown' ? 'context unknown' : application.purpose} · ${application.classificationProvenance === 'user_rule' ? 'your rule' : 'ATIRA default'}`}</Text>
         <View style={styles.appBarTrack}><View style={[styles.appBarFill, { width: `${Math.max(3, Math.round((application.durationSeconds / maximumSeconds) * 100))}%`, backgroundColor: meta.colour }]} /></View>
       </View>
       <Text style={styles.chevron}>{expanded ? '⌃' : '›'}</Text>
     </Pressable>
+  );
+}
+
+function BrowserBreakdown({ browserName, sites, unclassified }: { browserName: string; sites: DesktopUsageApplication[]; unclassified?: DesktopUsageApplication }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const items = [
+    ...sites,
+    ...(unclassified && unclassified.durationSeconds > 0
+      ? [{ ...unclassified, applicationId: `${unclassified.applicationId}:unclassified`, applicationName: `Other ${browserName} time` }]
+      : []),
+  ].sort((a, b) => b.durationSeconds - a.durationSeconds);
+  return (
+    <View style={styles.browserBreakdown}>
+      <Text style={styles.sessionsHeading}>WHERE YOUR {browserName.toUpperCase()} TIME WENT</Text>
+      {items.map((item) => {
+        const expanded = expandedId === item.applicationId;
+        const meta = categoryMeta[item.category];
+        return (
+          <View key={item.applicationId}>
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={`${item.applicationName}, ${formatDuration(item.durationSeconds)}`} onPress={() => setExpandedId(expanded ? null : item.applicationId)} style={({ pressed }) => [styles.domainRow, pressed && styles.appRowPressed]}>
+              <View style={[styles.domainIcon, { backgroundColor: meta.soft }]}><Text style={[styles.domainIconText, { color: meta.colour }]}>{item.applicationName[0]}</Text></View>
+              <View style={styles.domainCopy}><Text style={styles.domainName}>{item.applicationName}</Text><Text style={styles.domainCategory}>{item.applicationId.endsWith(':unclassified') ? `Active ${browserName} without domain context` : `${meta.label.split(' · ')[0]} · ${item.purpose === 'unknown' ? 'context unknown' : item.purpose}`}</Text></View>
+              <Text style={styles.domainDuration}>{formatDuration(item.durationSeconds)}</Text>
+              <Text style={styles.domainChevron}>{expanded ? '⌃' : '›'}</Text>
+            </Pressable>
+            {expanded ? <ApplicationSessions application={item} /> : null}
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -225,6 +261,15 @@ const styles = StyleSheet.create({
   appBarFill: { height: '100%', borderRadius: 2 },
   chevron: { color: colours.inkSoft, fontSize: 20, width: 22, textAlign: 'right', marginLeft: 8 },
   sessions: { backgroundColor: '#F7F4ED', marginHorizontal: -14, paddingHorizontal: 22, paddingTop: 13, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: colours.line },
+  browserBreakdown: { backgroundColor: '#F7F4ED', marginHorizontal: -14, paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: colours.line },
+  domainRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: colours.line, paddingVertical: 9 },
+  domainIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  domainIconText: { fontSize: 11, fontWeight: '900' },
+  domainCopy: { flex: 1 },
+  domainName: { color: colours.ink, fontSize: 10, fontWeight: '900' },
+  domainCategory: { color: colours.inkSoft, fontSize: 7, marginTop: 2 },
+  domainDuration: { color: colours.ink, fontSize: 9, fontWeight: '900' },
+  domainChevron: { color: colours.inkSoft, fontSize: 16, width: 18, textAlign: 'right', marginLeft: 6 },
   sessionsHeading: { color: colours.inkSoft, fontSize: 7, fontWeight: '900', letterSpacing: 0.8, marginBottom: 8 },
   sessionRow: { minHeight: 30, flexDirection: 'row', alignItems: 'center' },
   sessionDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },

@@ -29,6 +29,52 @@ interface HuaweiHealthStatus {
   detail: string;
 }
 
+export interface BrowserIntegrationStatus {
+  paired: boolean;
+  pairedAt: string | null;
+  lastObservedAt: string | null;
+  available: boolean;
+  connectedBrowserCount: number;
+  browsers: { browser: string; pairedAt: string; lastObservedAt: string | null }[];
+}
+
+export async function inspectDesktopCollectionControl() {
+  if (!globalThis.atiraDesktop) return { available: false, paused: false, running: false };
+  const status = await globalThis.atiraDesktop.collector.status();
+  return { available: true, ...status };
+}
+
+export async function setDesktopCollectionPaused(paused: boolean) {
+  if (!globalThis.atiraDesktop) throw new Error('Collector pause controls are available in the installed Windows app.');
+  return globalThis.atiraDesktop.collector.setPaused(paused);
+}
+
+export async function deleteDesktopCollectorHistory(range: '7d' | '30d' | 'all') {
+  if (!globalThis.atiraDesktop) throw new Error('Collector deletion controls are available in the installed Windows app.');
+  return globalThis.atiraDesktop.collector.delete(range);
+}
+
+export async function inspectBrowserIntegration(): Promise<BrowserIntegrationStatus> {
+  try {
+    const status = await fetchJson<Partial<Omit<BrowserIntegrationStatus, 'available'>> & Pick<BrowserIntegrationStatus, 'paired' | 'pairedAt' | 'lastObservedAt'>>('/integrations/browser/status');
+    const browsers = status.browsers ?? (status.paired ? [{ browser: 'chrome', pairedAt: status.pairedAt ?? new Date(0).toISOString(), lastObservedAt: status.lastObservedAt }] : []);
+    return { ...status, browsers, connectedBrowserCount: status.connectedBrowserCount ?? browsers.length, available: Boolean(globalThis.atiraDesktop) };
+  } catch {
+    return { paired: false, pairedAt: null, lastObservedAt: null, available: false, connectedBrowserCount: 0, browsers: [] };
+  }
+}
+
+export async function createBrowserPairingCode() {
+  if (!globalThis.atiraDesktop) throw new Error('Browser pairing is available in the installed Windows app.');
+  return globalThis.atiraDesktop.collector.createBrowserPairingCode();
+}
+
+export async function unpairBrowserIntegration() {
+  if (!globalThis.atiraDesktop) throw new Error('Browser pairing is available in the installed Windows app.');
+  await globalThis.atiraDesktop.collector.unpairBrowser();
+  return inspectBrowserIntegration();
+}
+
 export async function inspectDesktopCollector(): Promise<CollectorStatus> {
   try {
     const health = await fetchJson<DesktopCompanionHealth>('/health');
@@ -63,6 +109,7 @@ export async function syncDesktopObservations(repository: TimelineRepository): P
   const collector = payload.collector;
   await repository.upsertDevice(device);
   await repository.upsertCollector(collector);
+  await repository.reconcileLegacyDesktopIdentity(device, collector);
   const observations = payload.observations
     .filter(isDesktopObservation)
     .map((observation) => ({ ...observation, deviceId: device.id, collectorId: collector.id }));
@@ -162,7 +209,7 @@ function isDesktopObservation(value: unknown): value is RawObservation {
   if (!value || typeof value !== 'object') return false;
   const observation = value as Partial<RawObservation>;
   return observation.source === 'desktop' &&
-    observation.kind === 'desktop_foreground' &&
+    ['desktop_foreground', 'browser_foreground'].includes(String(observation.kind)) &&
     typeof observation.id === 'string' &&
     typeof observation.startedAt === 'string' &&
     typeof observation.endedAt === 'string' &&

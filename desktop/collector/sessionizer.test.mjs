@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DesktopSessionizer } from './sessionizer.mjs';
 
-const sample = (capturedAt, processName, state = 'active') => ({
+const sample = (capturedAt, processName, state = 'active', idleSeconds = state === 'idle' ? 360 : 1) => ({
   capturedAt,
   state,
   processName,
   processId: processName === 'Code' ? 101 : 202,
-  idleSeconds: state === 'idle' ? 360 : 1,
+  idleSeconds,
   windowTitle: null,
 });
 
@@ -30,6 +30,20 @@ test('idle and locked time are separate privacy-safe sessions', () => {
   assert.equal(active.payload.activityState, 'active');
   assert.equal(idle.payload.activityState, 'idle');
   assert.equal(idle.payload.application, null);
+  assert.equal(active.payload.passiveSeconds, 300);
+  assert.equal(idle.payload.awaySeconds, 300);
+});
+
+test('interaction quality is retained inside an application session without fragmenting the timeline', () => {
+  const sessionizer = new DesktopSessionizer();
+  sessionizer.push(sample('2026-07-21T10:00:00.000Z', 'EXCEL', 'active', 0));
+  sessionizer.push(sample('2026-07-21T10:00:10.000Z', 'EXCEL', 'active', 10));
+  sessionizer.push(sample('2026-07-21T10:00:20.000Z', 'EXCEL', 'active', 20));
+  const active = sessionizer.push(sample('2026-07-21T10:05:00.000Z', null, 'idle', 300));
+  assert.equal(active.payload.durationSeconds, 300);
+  assert.equal(active.payload.interactiveSeconds, 10);
+  assert.equal(active.payload.passiveSeconds, 290);
+  assert.equal(active.payload.engagementState, 'passive');
 });
 
 test('flush closes the current session and clears it', () => {

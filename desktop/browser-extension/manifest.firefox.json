@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "ATIRA Browser Activity",
+  "version": "1.0.0",
+  "description": "Privately adds active website domains to ATIRA without collecting browsing history.",
+  "permissions": ["tabs", "windows", "idle", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1:43123/*"],
+  "incognito": "not_allowed",
+  "background": {
+    "scripts": ["service-worker.js"]
+  },
+  "action": {
+    "default_title": "ATIRA Browser Activity",
+    "default_popup": "popup.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser-activity@atira.local",
+      "strict_min_version": "121.0"
+    }
+  }
+}

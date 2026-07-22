@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { DayPlace, DayRecord, EventCategory, EventState, EvidenceItem, TimelineEvent } from '../domain/types';
+import { DayPlace, DayRecord, DigitalActivityRule, EventCategory, EventState, EvidenceItem, TimelineEvent } from '../domain/types';
 import {
   CapabilityState,
   CollectorRecord,
@@ -102,6 +102,10 @@ interface RegisteredCollectorRow {
 }
 
 interface SegmentRow {
+  payload_json: string;
+}
+
+interface ActivityRuleRow {
   payload_json: string;
 }
 
@@ -287,6 +291,40 @@ async function migrate(database: SQLite.SQLiteDatabase) {
       CREATE INDEX IF NOT EXISTS observations_collector_time ON raw_observations(collector_id, started_at);
     `);
     currentVersion = 3;
+  }
+
+  if (currentVersion === 3) {
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS digital_activity_rules (
+        id TEXT PRIMARY KEY NOT NULL,
+        device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        application_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS activity_rules_device_app ON digital_activity_rules(device_id, application_id);
+    `);
+    await database.execAsync(`
+      DELETE FROM day_records
+      WHERE id IN ('2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19', '2026-07-20')
+        AND NOT EXISTS (
+          SELECT 1 FROM raw_observations WHERE substr(started_at, 1, 10) = day_records.id
+        );
+    `);
+    currentVersion = 4;
+  }
+
+  if (currentVersion === 4) {
+    await database.execAsync(`
+      DELETE FROM timeline_events
+      WHERE day_id IN ('2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19', '2026-07-20')
+        AND id NOT IN (SELECT DISTINCT event_id FROM evidence_items WHERE source = 'desktop');
+      UPDATE day_records
+      SET movement = '—', distance = '—', route_path = '', inferred_route_path = NULL, places_json = '[]'
+      WHERE id IN ('2026-07-14', '2026-07-15', '2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19', '2026-07-20');
+    `);
+    currentVersion = 5;
   }
 
   await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
@@ -562,6 +600,20 @@ class NativeTimelineRepository implements TimelineRepository {
     }));
   }
 
+  async deleteObservations(query: ObservationQuery = {}) {
+    const database = await getDatabase();
+    const clauses: string[] = [];
+    const parameters: string[] = [];
+    if (query.source) { clauses.push('source = ?'); parameters.push(query.source); }
+    if (query.deviceId) { clauses.push('device_id = ?'); parameters.push(query.deviceId); }
+    if (query.collectorId) { clauses.push('collector_id = ?'); parameters.push(query.collectorId); }
+    if (query.from) { clauses.push('started_at >= ?'); parameters.push(query.from); }
+    if (query.to) { clauses.push('started_at <= ?'); parameters.push(query.to); }
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
+    const result = await database.runAsync(`DELETE FROM raw_observations${where}`, parameters);
+    return result.changes;
+  }
+
   async listDevices(): Promise<DeviceRecord[]> {
     const database = await getDatabase();
     const rows = await database.getAllAsync<DeviceRow>('SELECT * FROM devices ORDER BY label, id');
@@ -592,6 +644,78 @@ class NativeTimelineRepository implements TimelineRepository {
       device.createdAt,
       device.updatedAt,
     );
+  }
+
+  async reconcileLegacyDesktopIdentity(device: DeviceRecord, collector: CollectorRecord) {
+    if (device.id.startsWith('legacy-') || device.deviceClass !== 'computer' || device.platform !== 'windows') return 0;
+    const database = await getDatabase();
+    const legacyIds = ['legacy-desktop-device'];
+    const rows = await database.getAllAsync<{ id: string }>(
+      `SELECT id FROM devices
+       WHERE id <> ? AND device_class = 'computer' AND platform = 'windows'
+         AND (id LIKE 'legacy-desktop-%' OR EXISTS (
+           SELECT 1 FROM registered_collectors
+           WHERE registered_collectors.device_id = devices.id
+             AND registered_collectors.provider = 'atira_windows_companion'
+         ))`,
+      device.id,
+    );
+    for (const row of rows) if (!legacyIds.includes(row.id)) legacyIds.push(row.id);
+    let reconciled = 0;
+    for (const legacyId of legacyIds) {
+      const result = await database.runAsync(
+        `UPDATE raw_observations SET device_id = ?, collector_id = ? WHERE source = 'desktop' AND device_id = ?`,
+        device.id, collector.id, legacyId,
+      );
+      reconciled += result.changes;
+      const rules = await database.getAllAsync<ActivityRuleRow>(
+        'SELECT payload_json FROM digital_activity_rules WHERE device_id = ?', legacyId,
+      );
+      for (const row of rules) {
+        const rule = JSON.parse(row.payload_json) as DigitalActivityRule;
+        const existing = await database.getFirstAsync<{ id: string }>(
+          'SELECT id FROM digital_activity_rules WHERE device_id = ? AND application_id = ?', device.id, rule.applicationId,
+        );
+        if (!existing) {
+          const moved = { ...rule, id: `${device.id}:${rule.applicationId}`, deviceId: device.id, updatedAt: new Date().toISOString() };
+          await this.upsertDigitalActivityRule(moved);
+        }
+        await database.runAsync('DELETE FROM digital_activity_rules WHERE id = ?', rule.id);
+      }
+      await database.runAsync('DELETE FROM registered_collectors WHERE device_id = ? AND NOT EXISTS (SELECT 1 FROM raw_observations WHERE collector_id = registered_collectors.id)', legacyId);
+      await database.runAsync('DELETE FROM devices WHERE id = ? AND NOT EXISTS (SELECT 1 FROM raw_observations WHERE device_id = ?)', legacyId, legacyId);
+    }
+    await database.runAsync(`DELETE FROM registered_collectors WHERE provider = 'legacy_import' AND source = 'desktop' AND NOT EXISTS (SELECT 1 FROM raw_observations WHERE collector_id = registered_collectors.id)`);
+    return reconciled;
+  }
+
+  async listDigitalActivityRules(): Promise<DigitalActivityRule[]> {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<ActivityRuleRow>('SELECT payload_json FROM digital_activity_rules ORDER BY updated_at DESC');
+    return rows.map((row) => JSON.parse(row.payload_json) as DigitalActivityRule);
+  }
+
+  async upsertDigitalActivityRule(rule: DigitalActivityRule) {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT INTO digital_activity_rules (id, device_id, application_id, payload_json, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         device_id = excluded.device_id,
+         application_id = excluded.application_id,
+         payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at`,
+      rule.id,
+      rule.deviceId,
+      rule.applicationId,
+      JSON.stringify(rule),
+      rule.updatedAt,
+    );
+  }
+
+  async deleteDigitalActivityRule(id: string) {
+    const database = await getDatabase();
+    await database.runAsync('DELETE FROM digital_activity_rules WHERE id = ?', id);
   }
 
   async listCollectors(): Promise<CollectorRecord[]> {
@@ -691,13 +815,14 @@ class NativeTimelineRepository implements TimelineRepository {
 
   async getDiagnostics() {
     const database = await getDatabase();
-    const [dayRow, observationRow, correctionRow, segmentRow, deviceRow, collectorRow] = await Promise.all([
+    const [dayRow, observationRow, correctionRow, segmentRow, deviceRow, collectorRow, activityRuleRow] = await Promise.all([
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM day_records'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM raw_observations'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM event_corrections'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM location_segments'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM devices'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM registered_collectors'),
+      database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM digital_activity_rules'),
     ]);
     return {
       adapter: 'sqlite' as const,
@@ -708,6 +833,7 @@ class NativeTimelineRepository implements TimelineRepository {
       segmentCount: segmentRow?.count ?? 0,
       deviceCount: deviceRow?.count ?? 0,
       collectorCount: collectorRow?.count ?? 0,
+      activityRuleCount: activityRuleRow?.count ?? 0,
     };
   }
 }

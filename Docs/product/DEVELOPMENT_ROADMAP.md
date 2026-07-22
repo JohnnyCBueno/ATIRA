@@ -8,6 +8,7 @@ ATIRA currently has:
 
 - an adaptive web/mobile product shell and packaged Windows alpha;
 - a real Windows foreground-application and idle-state collector;
+- an optional, locally paired Chrome domain-context collector that excludes URLs, content, titles, searches, background tabs, and incognito activity;
 - normalized local observations and deterministic reconstruction code;
 - cumulative desktop-usage presentation with short-session and system-process noise filtering;
 - fixture location, health, and phone evidence used to develop the experience before every native collector exists;
@@ -71,14 +72,17 @@ Exit condition: real Windows sessions can be captured, reconstructed, aggregated
 
 Exit condition: ATIRA cannot accidentally merge activity from two devices, and every visible digital total can explain which device produced it.
 
-### Phase 2 - Device-aware desktop intelligence (next)
+### Phase 2 - Device-aware desktop intelligence (implemented)
 
 - Add device management under You, including user-editable friendly labels.
 - Add local application aliases, categories, exclusions, and corrections scoped to a device.
 - Build real Patterns cuts by device, application, category, day, week, and month.
 - Keep ambiguous applications such as browsers and AI assistants neutral until other evidence supports an interpretation.
+- Replace overlapping browser-process time with more specific, consented active-domain intervals without double counting.
 
 Exit condition: the Windows-only product can answer useful digital-audit questions without confusing applications, devices, raw telemetry, or inferred productivity.
+
+The implementation now includes reversible device-scoped application/domain rules, editable device labels, factual 7/30/90-day audits, real week/month views, active-domain browser context, and explicit audit/emerging/established maturity gates. Packaged Windows storage is encrypted and pause/deletion controls are live.
 
 ### Phase 3 - Dedicated phone collectors and real location (deferred until a hardware path is available)
 
@@ -125,8 +129,10 @@ The next implementation slice is deliberately bounded:
 1. Define and migrate the device/collector registry. **Implemented.**
 2. Assign the Windows alpha a stable local ID and friendly label. **Implemented.**
 3. Make the desktop usage audit explicitly device-scoped. **Implemented.**
-4. Add editable device labels and device-scoped application rules.
-5. Turn the existing cumulative audit into real day, week, and month Patterns views.
-6. Defer place-aware work candidates until a dedicated location collector supplies suitable evidence.
+4. Add editable device labels and device-scoped application rules. **Implemented.**
+5. Turn the existing cumulative audit into real day, week, and month Patterns views. **Implemented.**
+6. Reconcile the pre-identity Windows history into the stable local device without merging real computers. **Implemented.**
+7. Add privacy-limited active-domain browser context with secure local pairing and overlap-safe audits. **Implemented.**
+8. Defer place-aware work candidates until a dedicated location collector supplies suitable evidence.
 
 This creates real infrastructure for every later phone and wearable source while producing a useful laptop-only capability now. IP and MAC-address tracking are explicitly outside the implementation plan.

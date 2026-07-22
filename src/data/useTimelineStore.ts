@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { DayRecord, TimelineEvent } from '../domain/types';
-import { demoDays } from '../fixtures/demoPeriods';
+import { DayRecord, DigitalActivityRule, TimelineEvent } from '../domain/types';
 import { syntheticMultiDayLocationTrace } from '../fixtures/syntheticLocationTrace';
 import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
-import { connectOrSyncHuaweiHealth, inspectDesktopCollector, inspectHuaweiHealthConnector, syncDesktopObservations, syncHuaweiHealthObservations } from '../collectors/desktopCollectorClient';
+import { BrowserIntegrationStatus, connectOrSyncHuaweiHealth, createBrowserPairingCode, deleteDesktopCollectorHistory, inspectBrowserIntegration, inspectDesktopCollectionControl, inspectDesktopCollector, inspectHuaweiHealthConnector, setDesktopCollectionPaused, syncDesktopObservations, syncHuaweiHealthObservations, unpairBrowserIntegration } from '../collectors/desktopCollectorClient';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
 import { desktopDayResultsToRecord, reconstructDesktopActivity } from '../reconstruction/desktopActivityEngine';
-import { CollectorStatus, EventCorrection, LocationSegmentRecord, RepositoryDiagnostics, TimelineRepository } from './contracts';
+import { CollectorStatus, DeviceRecord, EventCorrection, LocationSegmentRecord, RawObservation, RepositoryDiagnostics, TimelineRepository } from './contracts';
 import { getTimelineRepository } from './timelineRepository';
 
 interface UpdateEventInput {
@@ -29,27 +28,38 @@ export function useTimelineStore() {
   const [lastReconstruction, setLastReconstruction] = useState<LocationReconstructionResult | null>(null);
   const [locationSegments, setLocationSegments] = useState<LocationSegmentRecord[]>([]);
   const [knownPlaceClustering, setKnownPlaceClustering] = useState<KnownPlaceClusteringResult>({ places: [], assignments: [] });
+  const [observations, setObservations] = useState<RawObservation[]>([]);
+  const [devices, setDevices] = useState<DeviceRecord[]>([]);
+  const [digitalActivityRules, setDigitalActivityRules] = useState<DigitalActivityRule[]>([]);
+  const [desktopControl, setDesktopControl] = useState({ available: false, paused: false, running: false });
+  const [browserIntegration, setBrowserIntegration] = useState<BrowserIntegrationStatus>({ paired: false, pairedAt: null, lastObservedAt: null, available: false, connectedBrowserCount: 0, browsers: [] });
   const desktopSyncInFlight = useRef(false);
 
   const refresh = useCallback(async () => {
-    const [storedDays, statuses, repositoryDiagnostics, storedSegments] = await Promise.all([
+    const [storedDays, statuses, repositoryDiagnostics, storedSegments, storedObservations, storedDevices, storedRules] = await Promise.all([
       repository.listDays(),
       repository.listCollectorStatuses(),
       repository.getDiagnostics(),
       repository.listLocationSegments(),
+      repository.listObservations(),
+      repository.listDevices(),
+      repository.listDigitalActivityRules(),
     ]);
     setDays(storedDays);
     setCollectorStatuses(statuses);
     setDiagnostics(repositoryDiagnostics);
     setLocationSegments(storedSegments);
     setKnownPlaceClustering(clusterKnownPlaces(storedSegments));
+    setObservations(storedObservations);
+    setDevices(storedDevices);
+    setDigitalActivityRules(storedRules);
   }, [repository]);
 
   const initialize = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      await repository.initialize(demoDays);
+      await repository.initialize([]);
       await reconstructStoredLocationDays(repository);
       try {
         await repository.upsertCollectorStatus(await inspectLocationCollector());
@@ -71,7 +81,10 @@ export function useTimelineStore() {
         }
       }
       await reconstructStoredDesktopDays(repository);
+      if ((await repository.listDays()).length === 0) await repository.upsertDay(emptyDayRecord(new Date()));
       await repository.upsertCollectorStatus(await inspectHuaweiHealthConnector());
+      setDesktopControl(await inspectDesktopCollectionControl());
+      setBrowserIntegration(await inspectBrowserIntegration());
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'ATIRA could not open its local data store.');
@@ -102,6 +115,7 @@ export function useTimelineStore() {
           }
         }
         await refresh();
+        setBrowserIntegration(await inspectBrowserIntegration());
       } catch {
         // Automatic polling is intentionally quiet when the optional companion is offline.
       } finally {
@@ -207,6 +221,74 @@ export function useTimelineStore() {
     }
   }, [refresh, repository]);
 
+  const updateDeviceLabel = useCallback(async (deviceId: string, label: string) => {
+    const current = devices.find((device) => device.id === deviceId);
+    const trimmed = label.trim();
+    if (!current || !trimmed) return;
+    await repository.upsertDevice({ ...current, label: trimmed, updatedAt: new Date().toISOString() });
+    await reconstructStoredDesktopDays(repository);
+    await refresh();
+  }, [devices, refresh, repository]);
+
+  const upsertDigitalActivityRule = useCallback(async (input: Omit<DigitalActivityRule, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const existing = digitalActivityRules.find((rule) => rule.deviceId === input.deviceId && rule.applicationId === input.applicationId);
+    const now = new Date().toISOString();
+    await repository.upsertDigitalActivityRule({
+      ...input,
+      id: existing?.id ?? `${input.deviceId}:${input.applicationId}`,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    await reconstructStoredDesktopDays(repository);
+    await refresh();
+  }, [digitalActivityRules, refresh, repository]);
+
+  const deleteDigitalActivityRule = useCallback(async (id: string) => {
+    await repository.deleteDigitalActivityRule(id);
+    await reconstructStoredDesktopDays(repository);
+    await refresh();
+  }, [refresh, repository]);
+
+  const setDesktopPaused = useCallback(async (paused: boolean) => {
+    setActionError(null);
+    try {
+      const state = await setDesktopCollectionPaused(paused);
+      setDesktopControl({ available: true, ...state });
+      await repository.upsertCollectorStatus(await inspectDesktopCollector());
+      await refresh();
+    } catch (cause) {
+      const message = cause instanceof Error ? `Desktop companion: ${cause.message}` : 'Desktop companion control failed.';
+      setActionError(message);
+      throw cause;
+    }
+  }, [refresh, repository]);
+
+  const deleteDesktopHistory = useCallback(async (range: '7d' | '30d' | 'all') => {
+    setActionError(null);
+    try {
+      const from = range === 'all' ? undefined : new Date(Date.now() - (range === '7d' ? 7 : 30) * 86_400_000).toISOString();
+      const affected = await repository.listObservations({ source: 'desktop', from });
+      await deleteDesktopCollectorHistory(range);
+      await repository.deleteObservations({ source: 'desktop', from });
+      await clearDesktopDerivedDays(repository, new Set(affected.map((item) => item.startedAt.slice(0, 10))));
+      await refresh();
+    } catch (cause) {
+      const message = cause instanceof Error ? `Desktop companion: ${cause.message}` : 'Desktop history could not be deleted.';
+      setActionError(message);
+      throw cause;
+    }
+  }, [refresh, repository]);
+
+  const requestBrowserPairingCode = useCallback(async () => {
+    const result = await createBrowserPairingCode();
+    setBrowserIntegration(await inspectBrowserIntegration());
+    return result;
+  }, []);
+
+  const disconnectBrowserIntegration = useCallback(async () => {
+    setBrowserIntegration(await unpairBrowserIntegration());
+  }, []);
+
   return {
     days,
     collectorStatuses,
@@ -217,6 +299,11 @@ export function useTimelineStore() {
     lastReconstruction,
     locationSegments,
     knownPlaceClustering,
+    observations,
+    devices,
+    digitalActivityRules,
+    desktopControl,
+    browserIntegration,
     retry: initialize,
     refresh,
     updateEvent,
@@ -225,6 +312,13 @@ export function useTimelineStore() {
     syncDesktopActivity,
     connectHuaweiHealth,
     runSyntheticReconstruction,
+    updateDeviceLabel,
+    upsertDigitalActivityRule,
+    deleteDigitalActivityRule,
+    setDesktopPaused,
+    deleteDesktopHistory,
+    requestBrowserPairingCode,
+    disconnectBrowserIntegration,
   };
 }
 
@@ -247,14 +341,15 @@ async function reconstructStoredLocationDays(repository: TimelineRepository) {
 }
 
 async function reconstructStoredDesktopDays(repository: TimelineRepository) {
-  const [observations, devices, existingDays] = await Promise.all([
+  const [observations, devices, existingDays, rules] = await Promise.all([
     repository.listObservations({ source: 'desktop' }),
     repository.listDevices(),
     repository.listDays(),
+    repository.listDigitalActivityRules(),
   ]);
   const existingById = new Map(existingDays.map((day) => [day.id, day]));
   const resultsByDay = new Map<string, ReturnType<typeof reconstructDesktopActivity>>();
-  for (const result of reconstructDesktopActivity(observations, devices)) {
+  for (const result of reconstructDesktopActivity(observations, devices, rules)) {
     const dayResults = resultsByDay.get(result.dayId) ?? [];
     dayResults.push(result);
     resultsByDay.set(result.dayId, dayResults);
@@ -275,5 +370,44 @@ async function reconstructStoredDesktopDays(repository: TimelineRepository) {
         }
       : desktopRecord;
     await repository.upsertDay(record);
+  }
+}
+
+function emptyDayRecord(date: Date): DayRecord {
+  const id = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return {
+    id,
+    weekday: date.toLocaleDateString([], { weekday: 'short' }),
+    dayNumber: String(date.getDate()),
+    month: date.toLocaleDateString([], { month: 'long' }),
+    relativeLabel: 'Today',
+    coverage: 0,
+    understood: '0m',
+    work: '0m',
+    movement: '—',
+    learning: '0m',
+    distance: '—',
+    routePath: '',
+    places: [],
+    events: [],
+    desktopUsages: [],
+  };
+}
+
+async function clearDesktopDerivedDays(repository: TimelineRepository, dayIds: Set<string>) {
+  if (dayIds.size === 0) return;
+  const days = await repository.listDays();
+  for (const day of days.filter((item) => dayIds.has(item.id))) {
+    const events = day.events.filter((event) => !event.evidence.some((evidence) => evidence.source === 'desktop'));
+    const hasOtherEvidence = events.length > 0 || day.places.length > 0;
+    await repository.upsertDay({
+      ...day,
+      coverage: hasOtherEvidence ? day.coverage : 0,
+      understood: hasOtherEvidence ? day.understood : '0m',
+      work: hasOtherEvidence ? day.work : '0m',
+      learning: hasOtherEvidence ? day.learning : '0m',
+      desktopUsages: [],
+      events,
+    });
   }
 }

@@ -14,10 +14,12 @@ export class DesktopSessionizer {
       this.#current = startSession(normalized);
       return null;
     }
+    accrueEngagement(this.#current, normalized);
     if (sessionKey(normalized) === this.#current.key) {
       this.#current.lastSampleAt = normalized.capturedAt;
       this.#current.sampleCount += 1;
       this.#current.maximumIdleSeconds = Math.max(this.#current.maximumIdleSeconds, normalized.idleSeconds);
+      this.#current.lastEngagementState = engagementState(normalized);
       return null;
     }
     const completed = toObservation(this.#current, normalized.capturedAt, this.#observationNamespace);
@@ -27,6 +29,11 @@ export class DesktopSessionizer {
 
   flush(endedAt = new Date().toISOString()) {
     if (!this.#current) return null;
+    accrueEngagement(this.#current, {
+      capturedAt: new Date(endedAt).toISOString(),
+      state: this.#current.state,
+      idleSeconds: this.#current.maximumIdleSeconds,
+    });
     const completed = toObservation(this.#current, endedAt, this.#observationNamespace);
     this.#current = null;
     return completed;
@@ -40,6 +47,7 @@ export class DesktopSessionizer {
       startedAt: this.#current.startedAt,
       lastSampleAt: this.#current.lastSampleAt,
       sampleCount: this.#current.sampleCount,
+      engagementState: dominantEngagement(this.#current.engagementSeconds),
     };
   }
 }
@@ -68,7 +76,30 @@ function startSession(sample) {
     lastSampleAt: sample.capturedAt,
     sampleCount: 1,
     maximumIdleSeconds: sample.idleSeconds,
+    lastEngagementState: engagementState(sample),
+    engagementSeconds: { interactive: 0, passive: 0, away: 0, locked: 0 },
   };
+}
+
+function engagementState(sample) {
+  if (sample.state === 'locked') return 'locked';
+  if (sample.state === 'idle') return 'away';
+  return sample.idleSeconds < 15 ? 'interactive' : 'passive';
+}
+
+function accrueEngagement(session, nextSample) {
+  const elapsedSeconds = Math.max(0, Math.round((Date.parse(nextSample.capturedAt) - Date.parse(session.lastSampleAt)) / 1000));
+  if (elapsedSeconds === 0) return;
+  let state = session.lastEngagementState;
+  if (session.state === 'active') {
+    if (nextSample.state === 'locked') state = 'locked';
+    else if (Number.isFinite(nextSample.idleSeconds)) state = nextSample.idleSeconds < 15 ? 'interactive' : 'passive';
+  }
+  session.engagementSeconds[state] += elapsedSeconds;
+}
+
+function dominantEngagement(seconds) {
+  return Object.entries(seconds).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'away';
 }
 
 function sessionKey(sample) {
@@ -94,6 +125,11 @@ function toObservation(session, endedAtInput, observationNamespace) {
       durationSeconds,
       sampleCount: session.sampleCount,
       maximumIdleSeconds: session.maximumIdleSeconds,
+      engagementState: dominantEngagement(session.engagementSeconds),
+      interactiveSeconds: session.engagementSeconds.interactive,
+      passiveSeconds: session.engagementSeconds.passive,
+      awaySeconds: session.engagementSeconds.away,
+      lockedSeconds: session.engagementSeconds.locked,
       windowTitle: session.windowTitle,
       windowTitleCaptured: session.windowTitle !== null,
       platform: 'windows',

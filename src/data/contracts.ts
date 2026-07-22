@@ -1,4 +1,4 @@
-import { DayRecord, DeviceClass, DevicePlatform, EvidenceSource, TimelineEvent } from '../domain/types';
+import { DayRecord, DeviceClass, DevicePlatform, DigitalActivityRule, EvidenceSource, TimelineEvent } from '../domain/types';
 
 export type ObservationKind =
   | 'location_sample'
@@ -6,7 +6,8 @@ export type ObservationKind =
   | 'app_foreground'
   | 'health_sample'
   | 'calendar_interval'
-  | 'desktop_foreground';
+  | 'desktop_foreground'
+  | 'browser_foreground';
 
 export type CapabilityState =
   | 'available_full'
@@ -105,7 +106,7 @@ export interface EventCorrection {
 }
 
 export interface RepositoryDiagnostics {
-  adapter: 'sqlite' | 'web-storage';
+  adapter: 'sqlite' | 'web-storage' | 'desktop-encrypted';
   schemaVersion: number;
   dayCount: number;
   observationCount: number;
@@ -113,6 +114,7 @@ export interface RepositoryDiagnostics {
   segmentCount: number;
   deviceCount: number;
   collectorCount: number;
+  activityRuleCount: number;
 }
 
 export interface TimelineRepository {
@@ -122,8 +124,13 @@ export interface TimelineRepository {
   saveEvent(dayId: string, event: TimelineEvent, correction: EventCorrection): Promise<void>;
   appendObservations(observations: RawObservation[]): Promise<void>;
   listObservations(query?: ObservationQuery): Promise<RawObservation[]>;
+  deleteObservations(query?: ObservationQuery): Promise<number>;
   listDevices(): Promise<DeviceRecord[]>;
   upsertDevice(device: DeviceRecord): Promise<void>;
+  reconcileLegacyDesktopIdentity(device: DeviceRecord, collector: CollectorRecord): Promise<number>;
+  listDigitalActivityRules(): Promise<DigitalActivityRule[]>;
+  upsertDigitalActivityRule(rule: DigitalActivityRule): Promise<void>;
+  deleteDigitalActivityRule(id: string): Promise<void>;
   listCollectors(): Promise<CollectorRecord[]>;
   upsertCollector(collector: CollectorRecord): Promise<void>;
   replaceLocationSegments(dayId: string, segments: LocationSegmentRecord[]): Promise<void>;
@@ -133,7 +140,7 @@ export interface TimelineRepository {
   getDiagnostics(): Promise<RepositoryDiagnostics>;
 }
 
-export const DATABASE_SCHEMA_VERSION = 3;
+export const DATABASE_SCHEMA_VERSION = 6;
 
 export const initialCollectorStatuses: CollectorStatus[] = [
   {
@@ -151,7 +158,7 @@ export const initialCollectorStatuses: CollectorStatus[] = [
   {
     source: 'phone',
     state: 'available_limited',
-    detail: 'Platform collector not connected; fixture thresholds remain active.',
+    detail: 'Phone usage collector is not connected in this runtime.',
     updatedAt: new Date(0).toISOString(),
   },
   {

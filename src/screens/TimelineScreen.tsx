@@ -4,10 +4,10 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
 import { TimelineEventCard } from '../components/TimelineEventCard';
 import { LocationSegmentRecord, ObservationOrigin } from '../data/contracts';
-import { DayPlace, DayRecord, DesktopUsageSummary, TimelineEvent } from '../domain/types';
-import { categoryTotals } from '../fixtures/demoPeriods';
+import { DayPlace, DayRecord, DesktopUsageSummary, DigitalActivityCategory, TimelineEvent } from '../domain/types';
 import { KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { projectLocationSegments, projectedPath } from '../reconstruction/locationMapProjection';
+import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
 import { colours, radius, shadow } from '../theme';
 
 type PeriodScale = 'day' | 'week' | 'month';
@@ -50,18 +50,19 @@ function RouteMap({ day, segments, knownPlaceClustering }: { day: DayRecord; seg
   const projected = projectLocationSegments(segments, 360, 300, 48);
   const hasReconstruction = projected.length > 0;
   const desktopOnly = isDesktopOnlyDay(day) && !hasReconstruction;
+  const hasNoLocationEvidence = !hasReconstruction && day.places.length === 0;
   const assignmentBySegment = new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId]));
   const placeIndexById = new Map(knownPlaceClustering.places.map((place, index) => [place.id, index]));
   const reconstructedDistance = segments.filter((segment) => segment.kind === 'journey').reduce((total, segment) => total + segment.distanceMetres, 0);
   const stopCount = new Set(segments.filter((segment) => segment.kind === 'stay').map((segment) => assignmentBySegment.get(segment.id) ?? segment.id)).size;
   const origin = segmentOrigin(segments);
-  if (desktopOnly) {
+  if (hasNoLocationEvidence) {
     return (
       <View style={styles.noLocationCard}>
         <View style={styles.noLocationIcon}><Text style={styles.noLocationIconText}>D</Text></View>
-        <Text style={styles.noLocationEyebrow}>DESKTOP DAY IS LIVE</Text>
+        <Text style={styles.noLocationEyebrow}>{desktopOnly ? 'DESKTOP DAY IS LIVE' : 'SOURCE NOT CONNECTED'}</Text>
         <Text style={styles.noLocationTitle}>Location isn’t connected here.</Text>
-        <Text style={styles.noLocationBody}>ATIRA can still reconstruct computer activity while the phone’s place and movement layers remain absent.</Text>
+        <Text style={styles.noLocationBody}>{desktopOnly ? 'ATIRA can still reconstruct computer activity while the phone’s place and movement layers remain absent.' : 'This day has no location evidence. ATIRA will not draw a route or report zero travel without a connected phone collector.'}</Text>
       </View>
     );
   }
@@ -112,7 +113,10 @@ function RouteMap({ day, segments, knownPlaceClustering }: { day: DayRecord; seg
 
 function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: DayRecord; segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult; onOpenEvent: (event: TimelineEvent) => void }) {
   const desktopUsages = day.desktopUsages ?? [];
-  const applicationCount = desktopUsages.reduce((total, usage) => total + usage.applications.length, 0);
+  const applicationCount = desktopUsages.reduce(
+    (total, usage) => total + groupApplicationsForDisplay(usage.applications).length,
+    0,
+  );
   const meaningfulEvents = day.events.filter((event) => !event.evidence.some((item) => item.source === 'desktop'));
   const confirmed = meaningfulEvents.filter((event) => ['confirmed', 'corrected'].includes(event.state)).length;
   const desktopOnly = isDesktopOnlyDay(day);
@@ -243,70 +247,88 @@ function LocationSegmentTimeline({ segments, knownPlaceClustering }: { segments:
   );
 }
 
-function WeekView({ days, onSelectDay, onSwitchToDay }: { days: DayRecord[]; onSelectDay: (id: string) => void; onSwitchToDay: () => void }) {
+function WeekView({ days, selectedDay, onSelectDay, onSwitchToDay }: { days: DayRecord[]; selectedDay: DayRecord; onSelectDay: (id: string) => void; onSwitchToDay: () => void }) {
+  const selectedDate = parseDayId(selectedDay.id);
+  const slots = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(selectedDate);
+    date.setDate(date.getDate() - (6 - index));
+    const id = localDateId(date);
+    return { id, date, day: days.find((item) => item.id === id) };
+  });
+  const observed = slots.filter((slot) => desktopSeconds(slot.day) > 0);
+  const totalSeconds = observed.reduce((total, slot) => total + desktopSeconds(slot.day), 0);
+  const totals = aggregateCategories(observed.flatMap((slot) => slot.day?.desktopUsages ?? []));
   return (
     <>
       <View style={styles.weekHero}>
-        <Text style={styles.heroEyebrow}>14–20 JULY</Text>
-        <Text style={styles.heroTitle}>A well-covered week.</Text>
-        <Text style={styles.heroBody}>ATIRA reconstructed 88% of waking time across seven days.</Text>
+        <Text style={styles.heroEyebrow}>{formatDateRange(slots[0].date, slots[6].date).toUpperCase()}</Text>
+        <Text style={styles.heroTitle}>{observed.length === 0 ? 'Waiting for this week to become visible.' : 'A factual week in progress.'}</Text>
+        <Text style={styles.heroBody}>{observed.length} of 7 days contain desktop evidence · {formatSeconds(totalSeconds)} observed. Missing days are not treated as zero.</Text>
         <View style={styles.weekBars}>
-          {days.map((day) => (
-            <Pressable key={day.id} onPress={() => { onSelectDay(day.id); onSwitchToDay(); }} style={styles.weekBarColumn}>
-              <View style={styles.weekBarTrack}><View style={[styles.weekBarFill, { height: `${day.coverage}%` }]} /></View>
-              <Text style={styles.weekBarDay}>{day.weekday[0]}</Text>
-              <Text style={styles.weekBarNumber}>{day.dayNumber}</Text>
+          {slots.map((slot) => (
+            <Pressable key={slot.id} disabled={!slot.day} onPress={() => { if (slot.day) onSelectDay(slot.day.id); onSwitchToDay(); }} style={styles.weekBarColumn}>
+              <View style={styles.weekBarTrack}><View style={[styles.weekBarFill, desktopSeconds(slot.day) === 0 && { backgroundColor: '#CBC5BB' }, { height: `${desktopSeconds(slot.day) > 0 ? Math.max(7, slot.day?.coverage ?? 0) : 2}%` }]} /></View>
+              <Text style={styles.weekBarDay}>{slot.date.toLocaleDateString([], { weekday: 'short' })[0]}</Text>
+              <Text style={styles.weekBarNumber}>{slot.date.getDate()}</Text>
             </Pressable>
           ))}
         </View>
       </View>
 
-      <Text style={styles.sectionTitleStandalone}>Where the week went</Text>
+      <Text style={styles.sectionTitleStandalone}>Observed digital composition</Text>
       <View style={styles.compositionCard}>
-        <View style={styles.stackedBar}>{categoryTotals.map((item) => <View key={item.label} style={{ flex: item.value, backgroundColor: item.colour }} />)}</View>
-        {categoryTotals.map((item) => (
-          <View key={item.label} style={styles.compositionRow}>
-            <View style={[styles.compositionDot, { backgroundColor: item.colour }]} />
-            <Text style={styles.compositionLabel}>{item.label}</Text>
-            <Text style={styles.compositionValue}>{item.value}%</Text>
+        {totals.length > 0 && <View style={styles.stackedBar}>{totals.map((item) => <View key={item.category} style={{ flex: item.durationSeconds, backgroundColor: categoryColour[item.category] }} />)}</View>}
+        {totals.length === 0 ? <Text style={styles.heroBody}>No complete desktop sessions in this period.</Text> : totals.map((item) => (
+          <View key={item.category} style={styles.compositionRow}>
+            <View style={[styles.compositionDot, { backgroundColor: categoryColour[item.category] }]} />
+            <Text style={styles.compositionLabel}>{labelCategory(item.category)}</Text>
+            <Text style={styles.compositionValue}>{formatSeconds(item.durationSeconds)}</Text>
           </View>
         ))}
       </View>
 
-      <Text style={styles.sectionTitleStandalone}>Weekly signals</Text>
-      <View style={styles.signalCard}><Text style={styles.signalIcon}>✦</Text><View style={styles.signalCopy}><Text style={styles.signalTitle}>Wednesday held your strongest focus</Text><Text style={styles.signalBody}>Three uninterrupted morning hours followed your most consistent night of sleep.</Text></View></View>
-      <View style={styles.signalCard}><Text style={styles.signalIcon}>⌁</Text><View style={styles.signalCopy}><Text style={styles.signalTitle}>Movement happened on six days</Text><Text style={styles.signalBody}>Friday’s gym session was the longest; the weekend added gentler outdoor activity.</Text></View></View>
-      <View style={styles.signalCard}><Text style={styles.signalIcon}>◌</Text><View style={styles.signalCopy}><Text style={styles.signalTitle}>Thursday was communication-heavy</Text><Text style={styles.signalBody}>Meetings occupied the morning and phone breaks clustered directly afterwards.</Text></View></View>
+      <Text style={styles.sectionTitleStandalone}>Interpretation</Text>
+      <View style={styles.signalCard}><Text style={styles.signalIcon}>·</Text><View style={styles.signalCopy}><Text style={styles.signalTitle}>Facts only for now</Text><Text style={styles.signalBody}>Use Patterns to compare sufficiently covered periods. The timeline will not manufacture a weekly story from one source and a short history.</Text></View></View>
     </>
   );
 }
 
-function MonthView() {
-  const cells = Array.from({ length: 31 }, (_, index) => ({
-    day: index + 1,
-    intensity: [0.28, 0.52, 0.76, 0.4, 0.9][index % 5],
-  }));
+function MonthView({ days, selectedDay }: { days: DayRecord[]; selectedDay: DayRecord }) {
+  const selectedDate = parseDayId(selectedDay.id);
+  const year = selectedDate.getFullYear();
+  const month = selectedDate.getMonth();
+  const dayCount = new Date(year, month + 1, 0).getDate();
+  const monthDays = days.filter((day) => { const date = parseDayId(day.id); return date.getFullYear() === year && date.getMonth() === month; });
+  const maximum = Math.max(...monthDays.map((day) => desktopSeconds(day)), 1);
+  const cells = Array.from({ length: dayCount }, (_, index) => {
+    const dayNumber = index + 1;
+    const record = monthDays.find((day) => Number(day.dayNumber) === dayNumber);
+    return { day: dayNumber, observed: desktopSeconds(record) > 0, intensity: desktopSeconds(record) / maximum };
+  });
+  const spacerCount = (new Date(year, month, 1).getDay() + 6) % 7;
+  const totalSeconds = monthDays.reduce((total, day) => total + desktopSeconds(day), 0);
+  const observedCount = monthDays.filter((day) => desktopSeconds(day) > 0).length;
   return (
     <>
       <View style={styles.monthHero}>
-        <Text style={styles.heroEyebrowDark}>JULY 2026 · SO FAR</Text>
-        <Text style={styles.monthTitle}>A month becoming visible.</Text>
-        <Text style={styles.monthBody}>20 days reconstructed · 87% average coverage</Text>
-        <View style={styles.monthStats}><View><Text style={styles.monthStatValue}>112h</Text><Text style={styles.monthStatLabel}>Work modes</Text></View><View><Text style={styles.monthStatValue}>18h</Text><Text style={styles.monthStatLabel}>Movement</Text></View><View><Text style={styles.monthStatValue}>9</Text><Text style={styles.monthStatLabel}>New patterns</Text></View></View>
+        <Text style={styles.heroEyebrowDark}>{selectedDate.toLocaleDateString([], { month: 'long', year: 'numeric' }).toUpperCase()}</Text>
+        <Text style={styles.monthTitle}>{observedCount > 0 ? 'A month becoming visible.' : 'This month has no digital evidence yet.'}</Text>
+        <Text style={styles.monthBody}>{observedCount} observed days · missing evidence is not inactivity</Text>
+        <View style={styles.monthStats}><View><Text style={styles.monthStatValue}>{formatSeconds(totalSeconds)}</Text><Text style={styles.monthStatLabel}>observed desktop</Text></View><View><Text style={styles.monthStatValue}>{observedCount}</Text><Text style={styles.monthStatLabel}>observed days</Text></View><View><Text style={styles.monthStatValue}>0</Text><Text style={styles.monthStatLabel}>forced stories</Text></View></View>
       </View>
 
-      <Text style={styles.sectionTitleStandalone}>Daily balance</Text>
+      <Text style={styles.sectionTitleStandalone}>Daily desktop coverage</Text>
       <View style={styles.calendarCard}>
         <View style={styles.calendarLabels}>{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((label, index) => <Text key={`${label}-${index}`} style={styles.calendarLabel}>{label}</Text>)}</View>
         <View style={styles.calendarGrid}>
-          <View style={styles.calendarSpacer} /><View style={styles.calendarSpacer} />
-          {cells.map((cell) => <View key={cell.day} style={[styles.calendarCell, { backgroundColor: `rgba(23,107,91,${cell.intensity})` }]}><Text style={[styles.calendarNumber, cell.intensity > 0.6 && styles.calendarNumberLight]}>{cell.day}</Text></View>)}
+          {Array.from({ length: spacerCount }, (_, index) => <View key={`spacer-${index}`} style={styles.calendarSpacer} />)}
+          {cells.map((cell) => <View key={cell.day} style={[styles.calendarCell, { backgroundColor: cell.observed ? `rgba(23,107,91,${Math.max(0.18, cell.intensity)})` : '#E8E3DA' }]}><Text style={[styles.calendarNumber, cell.intensity > 0.6 && styles.calendarNumberLight]}>{cell.day}</Text></View>)}
         </View>
-        <Text style={styles.calendarNote}>Colour reflects a blend of coverage, movement, rest, and intentional activity—not a moral score.</Text>
+        <Text style={styles.calendarNote}>Colour reflects observed desktop duration only. Grey means missing evidence, not inactivity or a poor day.</Text>
       </View>
 
-      <Text style={styles.sectionTitleStandalone}>July’s story so far</Text>
-      <View style={styles.monthStory}><Text style={styles.monthStoryKicker}>EMERGING PATTERN</Text><Text style={styles.monthStoryTitle}>Your weekdays are becoming more deliberate.</Text><Text style={styles.monthStoryBody}>Morning creation increased while evening work declined. Weekends remained varied, with more outdoor movement than last month.</Text></View>
+      <Text style={styles.sectionTitleStandalone}>The month’s story</Text>
+      <View style={styles.monthStory}><Text style={styles.monthStoryKicker}>LEARNING STATE</Text><Text style={styles.monthStoryTitle}>No story is being forced onto the data.</Text><Text style={styles.monthStoryBody}>Patterns promotes a statement only after comparable coverage or repeated longitudinal evidence meets the maturity rules.</Text></View>
     </>
   );
 }
@@ -344,8 +366,8 @@ export function TimelineScreen({ days, selectedDay, locationSegments = [], known
       ) : null}
 
       {period === 'day' ? <DayView day={selectedDay} segments={selectedSegments} knownPlaceClustering={knownPlaceClustering} onOpenEvent={onOpenEvent} /> : null}
-      {period === 'week' ? <WeekView days={days} onSelectDay={onSelectDay} onSwitchToDay={() => setPeriod('day')} /> : null}
-      {period === 'month' ? <MonthView /> : null}
+      {period === 'week' ? <WeekView days={days} selectedDay={selectedDay} onSelectDay={onSelectDay} onSwitchToDay={() => setPeriod('day')} /> : null}
+      {period === 'month' ? <MonthView days={days} selectedDay={selectedDay} /> : null}
     </ScrollView>
   );
 }
@@ -371,6 +393,50 @@ function relativeLabelForDay(day: DayRecord) {
   if (difference === 1) return 'Yesterday';
   if (difference > 1 && difference < 7) return `${difference} days ago`;
   return selected.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+const categoryColour: Record<DigitalActivityCategory, string> = {
+  creation: colours.moss,
+  communication: colours.coral,
+  learning: '#596FA5',
+  entertainment: '#8A641E',
+  browser: colours.blue,
+  ai_assistance: '#6B6789',
+  other: colours.inkSoft,
+};
+
+function desktopSeconds(day?: DayRecord) {
+  return day?.desktopUsages?.reduce((total, usage) => total + usage.totalSeconds, 0) ?? 0;
+}
+
+function aggregateCategories(usages: DesktopUsageSummary[]) {
+  const totals = new Map<DigitalActivityCategory, number>();
+  for (const usage of usages) for (const application of usage.applications) totals.set(application.category, (totals.get(application.category) ?? 0) + application.durationSeconds);
+  return [...totals.entries()].map(([category, durationSeconds]) => ({ category, durationSeconds })).sort((a, b) => b.durationSeconds - a.durationSeconds);
+}
+
+function parseDayId(dayId: string) {
+  const [year, month, day] = dayId.split('-').map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+
+function localDateId(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateRange(start: Date, end: Date) {
+  return `${start.toLocaleDateString([], { day: 'numeric', month: 'short' })}–${end.toLocaleDateString([], { day: 'numeric', month: 'short' })}`;
+}
+
+function formatSeconds(seconds: number) {
+  if (seconds <= 0) return '0m';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${Math.max(1, minutes)}m`;
+}
+
+function labelCategory(category: DigitalActivityCategory) {
+  return category.replace('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function formatDistance(distanceMetres: number) {

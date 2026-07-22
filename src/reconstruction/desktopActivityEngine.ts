@@ -1,5 +1,6 @@
 import { DeviceRecord, RawObservation } from '../data/contracts';
-import { DayRecord, DesktopUsageHour, DesktopUsageSummary, DeviceClass, DevicePlatform, DigitalActivityCategory, EventCategory, TimelineEvent } from '../domain/types';
+import { ActivityPurpose, ClassificationProvenance, DayRecord, DesktopUsageHour, DesktopUsageSummary, DeviceClass, DevicePlatform, DigitalActivityCategory, DigitalActivityRule, EventCategory, TimelineEvent } from '../domain/types';
+import { normalizeDigitalSessions } from './digitalSessionNormalizer';
 
 export type DesktopActivityKind =
   | 'focused_work'
@@ -19,6 +20,9 @@ export interface DesktopActivityBlock {
   endedAt: string;
   durationSeconds: number;
   applications: string[];
+  purpose: ActivityPurpose;
+  classificationConfidence: number;
+  classificationProvenance: ClassificationProvenance;
   confidence: number;
   observationIds: string[];
 }
@@ -51,25 +55,34 @@ interface ClassifiedSession {
   application: string | null;
   applicationId: string;
   applicationName: string;
+  browserId?: string;
   usageCategory: DigitalActivityCategory;
+  purpose: ActivityPurpose;
+  classificationConfidence: number;
+  classificationProvenance: ClassificationProvenance;
   confidence: number;
 }
 
-const focusedApplications = ['code', 'devenv', 'rider64', 'webstorm64', 'pycharm64', 'idea64', 'excel', 'winword', 'powerpnt', 'figma', 'photoshop', 'illustrator', 'blender', 'autocad', 'notion', 'obsidian', 'powershell', 'pwsh', 'cmd', 'windowsterminal'];
-const communicationApplications = ['teams', 'ms-teams', 'slack', 'zoom', 'outlook', 'thunderbird', 'webex'];
-const learningApplications = ['anki', 'kindle', 'duolingo'];
-const entertainmentApplications = ['spotify', 'vlc', 'steam', 'epicgameslauncher'];
-const browserApplications = ['chrome', 'msedge', 'firefox', 'brave', 'opera'];
-const systemApplications = ['explorer', 'taskmgr'];
-const ignoredApplications = new Set(['atira', 'electron']);
-
-export function reconstructDesktopActivity(observations: RawObservation[], devices: DeviceRecord[] = []): DesktopDayReconstruction[] {
+export function reconstructDesktopActivity(observations: RawObservation[], devices: DeviceRecord[] = [], rules: DigitalActivityRule[] = []): DesktopDayReconstruction[] {
   const deviceById = new Map(devices.map((device) => [device.id, device]));
-  const sessions = observations
-    .filter((observation) => observation.source === 'desktop' && observation.kind === 'desktop_foreground')
-    .map(classifyObservation)
-    .filter((session): session is ClassifiedSession => session != null)
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const sessions = normalizeDigitalSessions(observations.filter((observation) => observation.source === 'desktop'), devices, rules)
+    .map((session): ClassifiedSession => ({
+      observationId: session.observationId,
+      deviceId: session.deviceId,
+      dayId: localDayId(new Date(session.startedAt)),
+      startedAt: session.startedAt,
+      endedAt: session.endedAt,
+      durationSeconds: session.durationSeconds,
+      application: session.activityLabel,
+      applicationId: session.applicationId,
+      applicationName: session.applicationName,
+      browserId: session.browserId,
+      usageCategory: session.category,
+      purpose: session.purpose,
+      classificationConfidence: session.classificationConfidence,
+      classificationProvenance: session.classificationProvenance,
+      ...classifyApplication(session.applicationName, session.category),
+    }));
   const sessionsByDayAndDevice = new Map<string, ClassifiedSession[]>();
   for (const session of sessions) {
     const key = `${session.dayId}\u0000${session.deviceId}`;
@@ -101,8 +114,8 @@ export function desktopDayResultsToRecord(results: DesktopDayReconstruction[], e
     return corrected ? { ...inferred, title: corrected.title, state: corrected.state, confidence: corrected.confidence } : inferred;
   });
   const observedSeconds = unionDuration(blocks);
-  const focusedWorkSeconds = unionDuration(blocks.filter((block) => ['focused_work', 'communication'].includes(block.kind)));
-  const learningSeconds = unionDuration(blocks.filter((block) => block.kind === 'learning'));
+  const focusedWorkSeconds = unionDuration(blocks.filter((block) => block.purpose === 'work'));
+  const learningSeconds = unionDuration(blocks.filter((block) => block.purpose === 'learning'));
   const startedAt = blocks[0]?.startedAt ?? `${dayId}T00:00:00.000Z`;
   const endedAt = blocks.at(-1)?.endedAt ?? startedAt;
   const spanSeconds = Math.max(observedSeconds, (Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
@@ -151,7 +164,7 @@ function reconstructDay(dayId: string, device: DeviceRecord, sessions: Classifie
   for (const session of sessions) {
     const current = blocks.at(-1);
     const gapSeconds = current ? Math.max(0, (Date.parse(session.startedAt) - Date.parse(current.endedAt)) / 1000) : Infinity;
-    if (current && current.kind === session.kind && gapSeconds <= 120) {
+    if (current && current.kind === session.kind && current.purpose === session.purpose && gapSeconds <= 120) {
       current.endedAt = session.endedAt;
       current.durationSeconds += session.durationSeconds;
       current.confidence = Math.min(current.confidence, session.confidence);
@@ -168,6 +181,9 @@ function reconstructDay(dayId: string, device: DeviceRecord, sessions: Classifie
       endedAt: session.endedAt,
       durationSeconds: session.durationSeconds,
       applications: session.application ? [session.application] : [],
+      purpose: session.purpose,
+      classificationConfidence: session.classificationConfidence,
+      classificationProvenance: session.classificationProvenance,
       confidence: session.confidence,
       observationIds: [session.observationId],
     });
@@ -184,8 +200,8 @@ function reconstructDay(dayId: string, device: DeviceRecord, sessions: Classifie
     platform: device.platform,
     blocks,
     observedSeconds,
-    focusedWorkSeconds: blocks.filter((block) => ['focused_work', 'communication'].includes(block.kind)).reduce((total, block) => total + block.durationSeconds, 0),
-    learningSeconds: blocks.filter((block) => block.kind === 'learning').reduce((total, block) => total + block.durationSeconds, 0),
+    focusedWorkSeconds: blocks.filter((block) => block.purpose === 'work').reduce((total, block) => total + block.durationSeconds, 0),
+    learningSeconds: blocks.filter((block) => block.purpose === 'learning').reduce((total, block) => total + block.durationSeconds, 0),
     coveragePercent: spanSeconds > 0 ? Math.min(100, Math.round((observedSeconds / spanSeconds) * 100)) : 0,
     startedAt,
     endedAt,
@@ -193,41 +209,13 @@ function reconstructDay(dayId: string, device: DeviceRecord, sessions: Classifie
   };
 }
 
-function classifyObservation(observation: RawObservation): ClassifiedSession | null {
-  const startedAt = new Date(observation.startedAt);
-  const endedAt = new Date(observation.endedAt ?? observation.capturedAt);
-  if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(endedAt.getTime()) || endedAt <= startedAt) return null;
-  const durationSeconds = Math.max(1, Math.round((endedAt.getTime() - startedAt.getTime()) / 1000));
-  const state = String(observation.payload.activityState ?? 'active');
-  const application = typeof observation.payload.application === 'string' ? observation.payload.application : null;
-  if (state !== 'active' || !application || durationSeconds < 60) return null;
-  const applicationId = normalizeApplication(application);
-  if (!applicationId || ignoredApplications.has(applicationId)) return null;
-  const classification = classifyApplication(application);
-  return {
-    observationId: observation.id,
-    deviceId: observation.deviceId ?? 'legacy-desktop-device',
-    dayId: localDayId(startedAt),
-    startedAt: startedAt.toISOString(),
-    endedAt: endedAt.toISOString(),
-    durationSeconds,
-    application,
-    applicationId,
-    applicationName: displayApplicationName(applicationId, application),
-    usageCategory: usageCategoryForKind(classification.kind),
-    ...classification,
-  };
-}
-
-function classifyApplication(application: string | null): Pick<ClassifiedSession, 'kind' | 'title' | 'confidence'> {
-  const normalized = normalizeApplication(application ?? '');
-  if (normalized === 'chatgpt') return { kind: 'ai_assistance', title: 'ChatGPT activity', confidence: 0.55 };
-  if (focusedApplications.some((name) => normalized.includes(name))) return { kind: 'focused_work', title: 'Focused desktop work', confidence: 0.82 };
-  if (communicationApplications.some((name) => normalized.includes(name))) return { kind: 'communication', title: 'Communication block', confidence: 0.86 };
-  if (learningApplications.some((name) => normalized.includes(name))) return { kind: 'learning', title: 'Learning on desktop', confidence: 0.78 };
-  if (entertainmentApplications.some((name) => normalized.includes(name))) return { kind: 'entertainment', title: 'Entertainment activity', confidence: 0.7 };
-  if (browserApplications.some((name) => normalized.includes(name))) return { kind: 'browser', title: 'Browser activity', confidence: 0.45 };
-  if (systemApplications.some((name) => normalized.includes(name))) return { kind: 'computer_activity', title: 'Desktop administration', confidence: 0.68 };
+function classifyApplication(application: string | null, category: DigitalActivityCategory): Pick<ClassifiedSession, 'kind' | 'title' | 'confidence'> {
+  if (category === 'ai_assistance') return { kind: 'ai_assistance', title: 'AI assistance', confidence: 0.55 };
+  if (category === 'creation') return { kind: 'focused_work', title: 'Creation activity', confidence: 0.82 };
+  if (category === 'communication') return { kind: 'communication', title: 'Communication activity', confidence: 0.7 };
+  if (category === 'learning') return { kind: 'learning', title: 'Learning activity', confidence: 0.78 };
+  if (category === 'entertainment') return { kind: 'entertainment', title: 'Entertainment activity', confidence: 0.7 };
+  if (category === 'browser') return { kind: 'browser', title: 'Browser activity', confidence: 0.45 };
   return { kind: 'computer_activity', title: `${application ?? 'Computer'} activity`, confidence: 0.52 };
 }
 
@@ -282,22 +270,31 @@ function summarizeUsage(sessions: ClassifiedSession[], device: DeviceRecord): De
       deviceId: session.deviceId,
       applicationId: session.applicationId,
       applicationName: session.applicationName,
+      browserId: session.browserId,
       category: session.usageCategory,
+      purpose: session.purpose,
+      classificationConfidence: session.classificationConfidence,
+      classificationProvenance: session.classificationProvenance,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
       durationSeconds: session.durationSeconds,
     };
-    const application = applications.get(session.applicationId) ?? {
+    const applicationKey = `${session.browserId ?? ''}\u0000${session.applicationId}`;
+    const application = applications.get(applicationKey) ?? {
       deviceId: session.deviceId,
       applicationId: session.applicationId,
       applicationName: session.applicationName,
+      browserId: session.browserId,
       category: session.usageCategory,
+      purpose: session.purpose,
+      classificationConfidence: session.classificationConfidence,
+      classificationProvenance: session.classificationProvenance,
       durationSeconds: 0,
       sessions: [],
     };
     application.durationSeconds += session.durationSeconds;
     application.sessions.push(usageSession);
-    applications.set(session.applicationId, application);
+    applications.set(applicationKey, application);
     distributeSessionAcrossHours(session, hourTotals, hourCategories);
   }
 

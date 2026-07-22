@@ -2,11 +2,14 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { DesktopSessionizer } from './sessionizer.mjs';
 import { loadOrCreateDesktopIdentity } from './device-identity.mjs';
 import { HuaweiHealthConnector } from '../connectors/huawei-health/huawei-health.mjs';
+import { appendEncryptedObservation, loadEncryptedObservations, parseEncryptionKey, rewriteEncryptedObservations } from './encrypted-observation-store.mjs';
+import { BrowserPairing } from './browser-pairing.mjs';
 
 const collectorDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(collectorDirectory, '..', '..');
@@ -15,6 +18,9 @@ const dataDirectory = options.dataDirectory
   ? path.resolve(options.dataDirectory)
   : path.join(projectDirectory, 'desktop', 'data');
 const observationPath = path.join(dataDirectory, 'observations.ndjson');
+const encryptedObservationPath = path.join(dataDirectory, 'observations.atira');
+const browserPairingPath = path.join(dataDirectory, 'browser-pairing.atira');
+const encryptionKey = parseEncryptionKey(process.env.ATIRA_COLLECTOR_ENCRYPTION_KEY);
 const pidPath = path.join(dataDirectory, 'collector.pid');
 const samplerPath = path.join(collectorDirectory, 'windows-sampler.ps1');
 const allowedOrigins = new Set(['http://localhost:8081', 'http://127.0.0.1:8081', 'http://127.0.0.1:43124']);
@@ -26,13 +32,16 @@ let stopping = false;
 
 await mkdir(dataDirectory, { recursive: true });
 const identity = await loadOrCreateDesktopIdentity(dataDirectory);
+const browserPairing = new BrowserPairing({ filePath: browserPairingPath, encryptionKey });
+await browserPairing.load();
 const sessionizer = new DesktopSessionizer({ observationNamespace: identity.device.id });
 await loadObservations();
 await writeFile(pidPath, String(process.pid), 'utf8');
 
 const server = createServer((request, response) => {
   const origin = request.headers.origin;
-  if (origin && !allowedOrigins.has(origin)) {
+  const extensionOrigin = isExtensionOrigin(origin);
+  if (origin && !allowedOrigins.has(origin) && !extensionOrigin) {
     sendJson(response, 403, { error: 'Origin is not allowed.' });
     return;
   }
@@ -55,6 +64,65 @@ const server = createServer((request, response) => {
     }
     sendJson(response, 202, { stopping: true });
     setImmediate(() => void stop(0));
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/control/delete') {
+    const suppliedToken = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+    if (!options.controlToken || suppliedToken !== options.controlToken) {
+      sendJson(response, 403, { error: 'Invalid collector control token.' });
+      return;
+    }
+    void readRequestJson(request)
+      .then(async ({ range }) => {
+        if (!['7d', '30d', 'all'].includes(range)) throw new Error('Unsupported deletion range.');
+        const cutoff = range === 'all' ? Number.POSITIVE_INFINITY : Date.now() - (range === '7d' ? 7 : 30) * 86_400_000;
+        const retained = observations.filter((item) => range !== 'all' && Date.parse(item.startedAt) < cutoff);
+        const deleted = observations.length - retained.length;
+        observations.splice(0, observations.length, ...retained);
+        await rewriteObservationStore();
+        sendJson(response, 200, { deleted });
+      })
+      .catch((error) => sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/control/browser-pairing-code') {
+    if (!hasControlAuthorization(request)) return sendJson(response, 403, { error: 'Invalid collector control token.' });
+    sendJson(response, 200, browserPairing.createCode());
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/control/browser-unpair') {
+    if (!hasControlAuthorization(request)) return sendJson(response, 403, { error: 'Invalid collector control token.' });
+    void browserPairing.unpair().then(() => sendJson(response, 200, browserPairing.status()))
+      .catch((error) => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/integrations/browser/pair') {
+    if (!extensionOrigin) return sendJson(response, 403, { error: 'Pairing is available only to a browser extension.' });
+    void readRequestJson(request).then(async ({ code, extensionInstallId, browser }) => {
+      const token = await browserPairing.pair(String(code ?? ''), String(extensionInstallId ?? ''), String(browser ?? 'other'));
+      sendJson(response, 200, { token, status: browserPairing.status() });
+    }).catch((error) => sendJson(response, 403, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/integrations/browser/observations') {
+    if (!extensionOrigin) return sendJson(response, 403, { error: 'Browser observations require an extension origin.' });
+    const suppliedToken = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const pairedClient = browserPairing.clientForToken(suppliedToken);
+    if (!pairedClient) return sendJson(response, 403, { error: 'The browser extension is not paired.' });
+    void readRequestJson(request).then(async ({ sessions }) => {
+      const items = Array.isArray(sessions) ? sessions.slice(0, 250) : [];
+      let accepted = 0;
+      let latest = null;
+      for (const item of items) {
+        const observation = browserObservation(item, pairedClient.browser);
+        if (!observation) continue;
+        await persistObservation(observation);
+        accepted += 1;
+        latest = observation.endedAt;
+      }
+      if (latest) await browserPairing.markObserved(latest, suppliedToken);
+      sendJson(response, 200, { accepted });
+    }).catch((error) => sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) }));
     return;
   }
   if (request.method !== 'GET') {
@@ -82,7 +150,7 @@ const server = createServer((request, response) => {
       },
       storage: {
         scope: 'device-local',
-        protection: 'development-plaintext',
+        protection: encryptionKey ? 'windows-dpapi-keyed-aes-256-gcm' : 'development-plaintext',
       },
     });
     return;
@@ -93,6 +161,10 @@ const server = createServer((request, response) => {
   }
   if (url.pathname === '/integrations/huawei/status') {
     sendJson(response, 200, huaweiHealth.status());
+    return;
+  }
+  if (url.pathname === '/integrations/browser/status') {
+    sendJson(response, 200, browserPairing.status());
     return;
   }
   if (url.pathname === '/integrations/huawei/connect') {
@@ -170,18 +242,27 @@ async function persistObservation(observation) {
   observation = attachIdentity(observation);
   if (observations.some((item) => item.id === observation.id)) return;
   observations.push(observation);
-  await appendFile(observationPath, `${JSON.stringify(observation)}\n`, 'utf8');
+  if (encryptionKey) await appendEncryptedObservation(encryptedObservationPath, observation, encryptionKey);
+  else await appendFile(observationPath, `${JSON.stringify(observation)}\n`, 'utf8');
   console.log(`[ATIRA desktop] Stored ${observation.payload.activityState}: ${observation.payload.application ?? 'no active app'} (${observation.payload.durationSeconds}s)`);
 }
 
 async function loadObservations() {
+  if (encryptionKey) {
+    try {
+      const encrypted = await loadEncryptedObservations(encryptedObservationPath, encryptionKey);
+      for (const observation of encrypted) if (isStoredDesktopObservation(observation)) observations.push(attachIdentity(observation));
+    } catch (error) {
+      if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+  }
   try {
     const contents = await readFile(observationPath, 'utf8');
     for (const line of contents.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
         const observation = JSON.parse(line);
-        if (observation?.source === 'desktop' && observation?.kind === 'desktop_foreground') observations.push(attachIdentity(observation));
+        if (isStoredDesktopObservation(observation) && !observations.some((item) => item.id === observation.id)) observations.push(attachIdentity(observation));
       } catch {
         // A damaged line is isolated; later valid observations remain readable.
       }
@@ -189,6 +270,15 @@ async function loadObservations() {
   } catch (error) {
     if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
   }
+  if (encryptionKey) {
+    await rewriteEncryptedObservations(encryptedObservationPath, observations, encryptionKey);
+    await rm(observationPath, { force: true });
+  }
+}
+
+async function rewriteObservationStore() {
+  if (encryptionKey) await rewriteEncryptedObservations(encryptedObservationPath, observations, encryptionKey);
+  else await writeFile(observationPath, observations.map((item) => JSON.stringify(item)).join('\n') + (observations.length ? '\n' : ''), 'utf8');
 }
 
 function attachIdentity(observation) {
@@ -197,6 +287,48 @@ function attachIdentity(observation) {
     deviceId: identity.device.id,
     collectorId: identity.collector.id,
   };
+}
+
+function browserObservation(item, browser) {
+  const domain = typeof item?.domain === 'string' ? item.domain.trim().toLowerCase().replace(/^www\./, '') : '';
+  const started = Date.parse(item?.startedAt);
+  const ended = Date.parse(item?.endedAt);
+  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,62})\.)+[a-z]{2,63}$/.test(domain)) return null;
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended <= started || ended - started > 24 * 60 * 60_000 || ended > Date.now() + 60_000) return null;
+  return attachIdentity({
+    id: `browser-${randomUUID()}`,
+    source: 'desktop',
+    kind: 'browser_foreground',
+    startedAt: new Date(started).toISOString(),
+    endedAt: new Date(ended).toISOString(),
+    capturedAt: new Date().toISOString(),
+    quality: 0.94,
+    payload: {
+      application: browserApplication(browser),
+      browser,
+      domain,
+      activityState: 'active',
+      audible: Boolean(item?.audible),
+      privacyLevel: 'domain_only',
+    },
+  });
+}
+
+function isStoredDesktopObservation(observation) {
+  return observation?.source === 'desktop' && ['desktop_foreground', 'browser_foreground'].includes(observation?.kind);
+}
+
+function isExtensionOrigin(origin) {
+  return typeof origin === 'string' && /^(?:chrome-extension|moz-extension|safari-web-extension):\/\/[a-z0-9-]{16,64}$/i.test(origin);
+}
+
+function browserApplication(browser) {
+  return { chrome: 'chrome', edge: 'msedge', brave: 'brave', opera: 'opera', firefox: 'firefox', safari: 'safari' }[browser] ?? 'browser';
+}
+
+function hasControlAuthorization(request) {
+  const suppliedToken = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+  return Boolean(options.controlToken && suppliedToken === options.controlToken);
 }
 
 async function stop(exitCode) {
@@ -218,6 +350,13 @@ function sendJson(response, status, body) {
 function sendHtml(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width"><title>ATIRA</title></head><body style="font-family:system-ui;padding:40px;max-width:620px">${body}</body></html>`);
+}
+
+async function readRequestJson(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const body = Buffer.concat(chunks).toString('utf8');
+  return body ? JSON.parse(body) : {};
 }
 
 function escapeHtml(value) {

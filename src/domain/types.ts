@@ -60,6 +60,119 @@ export type DigitalActivityCategory =
   | 'ai_assistance'
   | 'other';
 
+export type ActivityPurpose = 'work' | 'learning' | 'personal' | 'unknown';
+
+export type ClassificationProvenance = 'system_default' | 'user_rule' | 'unclassified';
+
+export type DigitalAuditRange = '7d' | '30d' | '90d';
+
+export type InsightMaturity = 'audit' | 'emerging' | 'established';
+
+export type EngagementState = 'interactive' | 'passive' | 'away' | 'locked';
+
+export interface EngagementSummary {
+  interactiveSeconds: number;
+  passiveSeconds: number;
+  awaySeconds: number;
+  lockedSeconds: number;
+  unclassifiedSeconds: number;
+  classifiedActiveCoveragePercent: number;
+}
+
+export interface DigitalActivityRule {
+  id: string;
+  deviceId: string;
+  applicationId: string;
+  alias?: string;
+  category?: DigitalActivityCategory;
+  purpose?: ActivityPurpose;
+  excluded: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DigitalAuditDay {
+  dayId: string;
+  observed: boolean;
+  totalSeconds: number;
+  categories: { category: DigitalActivityCategory; durationSeconds: number }[];
+  purposes: { purpose: ActivityPurpose; durationSeconds: number }[];
+}
+
+export interface DigitalAuditHour {
+  hour: number;
+  totalSeconds: number;
+  categories: { category: DigitalActivityCategory; durationSeconds: number }[];
+  purposes: { purpose: ActivityPurpose; durationSeconds: number }[];
+}
+
+export interface DigitalAuditApplication {
+  deviceId: string;
+  deviceLabel: string;
+  applicationId: string;
+  applicationName: string;
+  browserId?: string;
+  category: DigitalActivityCategory;
+  purpose: ActivityPurpose;
+  classificationConfidence: number;
+  classificationProvenance: ClassificationProvenance;
+  durationSeconds: number;
+  interactiveSeconds: number;
+  passiveSeconds: number;
+  unclassifiedEngagementSeconds: number;
+  sessionCount: number;
+  observationIds: string[];
+}
+
+export interface DigitalAuditEvidence {
+  id: string;
+  label: string;
+  detail: string;
+  source: EvidenceSource;
+  observationIds: string[];
+}
+
+export interface DigitalSignal {
+  id: string;
+  maturity: 'emerging';
+  title: string;
+  summary: string;
+  confidence: number;
+  evidence: DigitalAuditEvidence[];
+}
+
+export interface DigitalInsight {
+  id: string;
+  maturity: 'established';
+  title: string;
+  summary: string;
+  confidence: number;
+  evidence: DigitalAuditEvidence[];
+}
+
+export interface DigitalAudit {
+  range: DigitalAuditRange;
+  startedAt: string;
+  endedAt: string;
+  expectedDayCount: number;
+  observedDayCount: number;
+  missingDayCount: number;
+  coveragePercent: number;
+  totalSeconds: number;
+  sources: EvidenceSource[];
+  priorTotalSeconds: number | null;
+  maturity: InsightMaturity;
+  applications: DigitalAuditApplication[];
+  days: DigitalAuditDay[];
+  hours: DigitalAuditHour[];
+  categories: { category: DigitalActivityCategory; durationSeconds: number }[];
+  purposes: { purpose: ActivityPurpose; durationSeconds: number }[];
+  devices: { deviceId: string; deviceLabel: string; durationSeconds: number }[];
+  engagement: EngagementSummary;
+  signals: DigitalSignal[];
+  insights: DigitalInsight[];
+}
+
 export type DeviceClass = 'phone' | 'tablet' | 'computer' | 'watch' | 'band' | 'other';
 
 export type DevicePlatform = 'windows' | 'macos' | 'ios' | 'android' | 'harmonyos' | 'web' | 'unknown';
@@ -69,7 +182,11 @@ export interface DesktopUsageSession {
   deviceId: string;
   applicationId: string;
   applicationName: string;
+  browserId?: string;
   category: DigitalActivityCategory;
+  purpose: ActivityPurpose;
+  classificationConfidence: number;
+  classificationProvenance: ClassificationProvenance;
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
@@ -79,7 +196,11 @@ export interface DesktopUsageApplication {
   deviceId: string;
   applicationId: string;
   applicationName: string;
+  browserId?: string;
   category: DigitalActivityCategory;
+  purpose: ActivityPurpose;
+  classificationConfidence: number;
+  classificationProvenance: ClassificationProvenance;
   durationSeconds: number;
   sessions: DesktopUsageSession[];
 }

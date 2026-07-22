@@ -1,8 +1,8 @@
 # ATIRA
 
-ATIRA is an automatic personal life timeline and analytics product. It combines consented signals from location, device activity, health, calendars, and eventually desktop companions to reconstruct a useful, inspectable account of a person's day with minimal manual input.
+ATIRA is a passive life-ontology and personal productivity product. It combines consented signals from location, device activity, health, calendars, and desktop companions to reconstruct a useful, inspectable account of a person's life with minimal manual input. Health is one contextual stream among many; ATIRA is not positioned as a medical or fitness product.
 
-This repository now contains a fixture-seeded product prototype running on a production-oriented local data boundary. Corrections persist, native builds use an encrypted SQLite design, and the first explicit location-capture path can store a real raw observation locally. Automatic reconstruction and continuous collectors are still under development.
+This repository now contains a real Windows digital-activity alpha plus explicitly labelled native/synthetic sensor scaffolds. Raw observations, reversible device-scoped rules, real 7/30/90-day audits, and evidence-maturity gates are implemented. The product refuses to turn short or incomplete history into a fictional personal insight.
 
 ## Run the prototype
 
@@ -27,9 +27,17 @@ npm run desktop:collector
 
 Leave that terminal running and use the computer normally. While ATIRA is open it checks for completed sessions every 30 seconds, reconstructs them into a real dated desktop timeline, and retains previously imported history when the companion is offline. **Sync desktop sessions** in **You** remains available as an immediate manual refresh. Stop the collector with `Ctrl+C`.
 
-The companion records process names and active/idle/locked intervals. Window titles are off by default, and it does not capture screenshots, keystrokes, document contents, or URLs. Its current NDJSON persistence is local, git-ignored, and plaintext for development; it is not the release storage design. See [desktop/README.md](desktop/README.md) for the exact test flow and limitations.
+The companion records process names and active/idle/locked intervals. Each foreground interval also retains an internal interaction mix: recent input, passive foreground attention, away, or locked. This supports longitudinal insight without adding granular state rows to the timeline. Window titles are off by default, and it does not capture screenshots, keystrokes, document contents, or URLs. The standalone command keeps a plainly documented development store. The packaged Windows app migrates observations to AES-256-GCM records and protects the key with Windows DPAPI through Electron `safeStorage`.
 
 Each companion installation owns a persistent random device and collector ID stored alongside its local observations. ATIRA does not use a MAC address, hostname, or hardware serial as identity, and application usage is aggregated separately for each registered device.
+
+Earlier Windows collector identities are reconciled into the current installation without discarding raw history. This is safe while the repository is device-local and has no cross-computer import or sync; the rule will become an explicit user-controlled merge once cross-device transfer exists.
+
+## Add active browser context
+
+The optional Manifest V3 extension under `desktop/browser-extension` turns generic browser time into active-domain intervals. One shared implementation supports Chromium browsers, with a generated Firefox package and browser-qualified observations. Multiple browsers can remain paired concurrently, and every website stays nested beneath the browser that supplied it. It records the hostname only (for example `docs.google.com`), never the path, query, page title, page content, search terms, keystrokes, background tabs, or incognito activity.
+
+Run `npm run desktop:browser:build` to create Chromium and Firefox packages under `out/browser-extensions`. For Chromium development, load `desktop/browser-extension` unpacked. In the installed app, open **You → Browser activity**, create a one-time five-minute code, and enter it in each browser you want to connect. Pairing is local, authenticated, and the companion stores only encrypted token hashes.
 
 ## Run the native Windows app
 
@@ -47,27 +55,32 @@ npm run desktop:app:make
 
 The generated installer is written under `out/make`. This alpha is unsigned and intentionally unoptimized; Windows may display a trust warning, and code signing is required before public distribution.
 
-On Windows, the quickest phone-shaped development loop is `npm run web` with a responsive browser viewport. A physical iPhone can run this fixture prototype through Expo Go on the same network. Android Studio provides the local Android emulator; Apple’s iOS Simulator still requires macOS. See [Docs/development/WINDOWS_PROTOTYPE_WORKFLOW.md](Docs/development/WINDOWS_PROTOTYPE_WORKFLOW.md) for the staged workflow.
+The installed shell stores its repository outside browser `localStorage`, encrypts it with an AES-256-GCM key protected by Windows, and exposes pause plus 7-day, 30-day, and all-history deletion controls under **You**.
+
+On Windows, the quickest cross-platform development loop is `npm run web` with responsive browser widths. Expo Go can preview compatible shared UI on a physical phone, while the packaged Windows app is the real collector-backed environment. Android Studio provides the local Android emulator; Apple’s iOS Simulator still requires macOS. See [Docs/development/WINDOWS_PROTOTYPE_WORKFLOW.md](Docs/development/WINDOWS_PROTOTYPE_WORKFLOW.md) for the staged workflow.
 
 ## Prototype scope
 
 - unified Timeline combining a continuous route map and detailed daily chronology;
-- selectable multi-day fixtures with day, week, and month views;
+- factual day, week, and month views derived from stored evidence;
 - inspectable evidence and confidence;
 - one-tap confirmation and correction;
-- domain-based Patterns exploration for body, sleep, work, digital life, travel, and learning;
+- real 7/30/90-day Digital and Work audits, with unavailable domains honestly waiting for sources;
 - capability preview for EU iOS, global iOS, and Android.
 
 ## Data foundation
 
 - Native: SQLCipher-backed Expo SQLite with its generated key held in SecureStore.
 - Web preview: clearly labelled development-only local storage adapter.
+- Packaged Windows: encrypted main-process repository and encrypted collector records with OS-protected keys.
 - Normalized tables/contracts for observations, collector states, days, events, evidence, and corrections.
 - Device and collector registries with device-scoped observation queries and digital aggregates.
 - Explicit foreground location capture and development-build background task scaffolding.
 - Deterministic location reconstruction for cleaning, stays, journeys, gaps, distance, coverage, and conservative travel modes.
 - Windows foreground-app and idle-state collection through a loopback-only companion API.
-- Conservative desktop reconstruction into real daily activity blocks, with ambiguous browser and AI use labelled honestly.
+- Conservative desktop reconstruction into real daily activity blocks, with ambiguous AI use labelled honestly and optional domain-only browser context.
+- Device-scoped aliases, categories, purposes, exclusions, and resettable interpretation rules.
+- Audit, emerging-signal, and established-insight maturity gates with inspectable evidence.
 
 See [Docs/decisions/0003-local-first-data-layer.md](Docs/decisions/0003-local-first-data-layer.md) for the security and collector boundary.
 See [Docs/decisions/0004-location-reconstruction-engine.md](Docs/decisions/0004-location-reconstruction-engine.md) for reconstruction semantics and current calibration thresholds.

@@ -33,6 +33,11 @@ export default function App() {
     lastReconstruction,
     locationSegments,
     knownPlaceClustering,
+    observations,
+    devices,
+    digitalActivityRules,
+    desktopControl,
+    browserIntegration,
     retry,
     updateEvent,
     captureLocation,
@@ -40,12 +45,21 @@ export default function App() {
     syncDesktopActivity,
     connectHuaweiHealth,
     runSyntheticReconstruction,
+    updateDeviceLabel,
+    upsertDigitalActivityRule,
+    deleteDigitalActivityRule,
+    setDesktopPaused,
+    deleteDesktopHistory,
+    requestBrowserPairingCode,
+    disconnectBrowserIntegration,
   } = useTimelineStore();
   const { width } = useWindowDimensions();
   const profile = profiles.find((item) => item.id === profileId) ?? profiles[1];
   const selectedDay = days.find((day) => day.id === selectedDayId) ?? days[days.length - 1] ?? null;
   const selectedEvent = days.flatMap((day) => day.events).find((event) => event.id === selectedEventId) ?? null;
   const selectedEventDay = selectedEvent ? days.find((day) => day.events.some((event) => event.id === selectedEvent.id)) : null;
+  const realLocationSegmentIds = new Set(locationSegments.filter((segment) => segment.origin === 'real').map((segment) => segment.id));
+  const realKnownPlaceCount = knownPlaceClustering.places.filter((place) => knownPlaceClustering.assignments.some((assignment) => assignment.placeId === place.id && realLocationSegmentIds.has(assignment.segmentId))).length;
   const isDesktop = Platform.OS === 'web' && width >= 900;
   const showDesktopRail = width >= 1280;
   const desktopCollector = collectorStatuses.find((status) => status.source === 'desktop');
@@ -53,7 +67,7 @@ export default function App() {
 
   const currentScreen = useMemo(() => {
     if (!selectedDay) return null;
-    if (activeTab === 'patterns') return <PatternsScreen />;
+    if (activeTab === 'patterns') return <PatternsScreen observations={observations} devices={devices} rules={digitalActivityRules} />;
     if (activeTab === 'you') return (
       <YouScreen
         profile={profile}
@@ -67,7 +81,19 @@ export default function App() {
         onSyncDesktopActivity={syncDesktopActivity}
         onConnectHuaweiHealth={connectHuaweiHealth}
         onRunSyntheticReconstruction={runSyntheticReconstruction}
-        knownPlaceCount={knownPlaceClustering.places.length}
+        knownPlaceCount={realKnownPlaceCount}
+        devices={devices}
+        observations={observations}
+        digitalActivityRules={digitalActivityRules}
+        onUpdateDeviceLabel={updateDeviceLabel}
+        onUpsertDigitalActivityRule={upsertDigitalActivityRule}
+        onDeleteDigitalActivityRule={deleteDigitalActivityRule}
+        desktopControl={desktopControl}
+        onSetDesktopPaused={setDesktopPaused}
+        onDeleteDesktopHistory={deleteDesktopHistory}
+        browserIntegration={browserIntegration}
+        onRequestBrowserPairingCode={requestBrowserPairingCode}
+        onDisconnectBrowser={disconnectBrowserIntegration}
       />
     );
     return (
@@ -80,7 +106,7 @@ export default function App() {
         onOpenEvent={(event) => setSelectedEventId(event.id)}
       />
     );
-  }, [actionError, activeTab, captureLocation, collectorStatuses, connectHuaweiHealth, days, diagnostics, enableBackgroundLocation, knownPlaceClustering, lastReconstruction, locationSegments, profile, runSyntheticReconstruction, selectedDay, syncDesktopActivity]);
+  }, [actionError, activeTab, browserIntegration, captureLocation, collectorStatuses, connectHuaweiHealth, days, deleteDesktopHistory, deleteDigitalActivityRule, desktopControl, devices, diagnostics, digitalActivityRules, disconnectBrowserIntegration, enableBackgroundLocation, knownPlaceClustering, lastReconstruction, locationSegments, observations, profile, requestBrowserPairingCode, runSyntheticReconstruction, selectedDay, setDesktopPaused, syncDesktopActivity, updateDeviceLabel, upsertDigitalActivityRule]);
 
   if (loading) {
     return (

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="popup.css"><title>ATIRA Browser Activity</title></head>
+  <body>
+    <main>
+      <div class="mark">A</div>
+      <p class="eyebrow">ATIRA BROWSER ACTIVITY</p>
+      <h1>Understand browser time without reading your browsing.</h1>
+      <p class="privacy">ATIRA records only the domain in the active, focused tab and its time interval. It never records paths, titles, page content, searches, keystrokes, or incognito activity.</p>
+      <section id="pairing">
+        <label for="code">Pairing code from ATIRA</label>
+        <input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+        <button id="pair">Connect securely</button>
+      </section>
+      <section id="connected" hidden>
+        <div class="status"><span></span><strong id="browser-status">Connected locally</strong></div>
+        <p id="current">Waiting for an active website.</p>
+        <p id="queue"></p>
+        <button id="disconnect" class="secondary">Forget connection on this browser</button>
+      </section>
+      <p id="message" role="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
