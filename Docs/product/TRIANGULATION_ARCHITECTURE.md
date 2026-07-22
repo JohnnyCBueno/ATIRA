@@ -1,5 +1,7 @@
 # ATIRA triangulation architecture
 
+For the full product-owner explanation, scenario ledger, confidence caveats, and repeatable quality-audit method, see [ATIRA's brain under the hood](./ONTOLOGICAL_REASONING_AUDIT.md).
+
 ATIRA reconstructs lived behaviour from limited evidence. The triangulation layer is deliberately conservative: it combines independently observed sources only when their coverage is explicit, preserves contradictions and alternatives, and never promotes declared intention into observed fact.
 
 ## Evidence roles

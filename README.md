@@ -91,4 +91,6 @@ See [Docs/decisions/0009-evidence-aggregation-and-fusion.md](Docs/decisions/0009
 See [Docs/decisions/0010-device-and-place-context.md](Docs/decisions/0010-device-and-place-context.md) for device identity, activity/place fusion, and the limits of IP and MAC-address evidence.
 See [Docs/integrations/HUAWEI_HEALTH_SETUP.md](Docs/integrations/HUAWEI_HEALTH_SETUP.md) for the wearable connector setup boundary.
 
+See [ATIRA's brain under the hood](Docs/product/ONTOLOGICAL_REASONING_AUDIT.md) for the implemented ontological process, scenario ledger, and quality-audit method.
+
 See [Docs/product/DEVELOPMENT_ROADMAP.md](Docs/product/DEVELOPMENT_ROADMAP.md), [Docs/product/PRODUCT_CHARTER.md](Docs/product/PRODUCT_CHARTER.md), and [Docs/product/CAPABILITY_MATRIX.md](Docs/product/CAPABILITY_MATRIX.md).
