@@ -10,6 +10,8 @@ ATIRA currently has:
 - a real Windows foreground-application and idle-state collector;
 - an optional, locally paired Chrome domain-context collector that excludes URLs, content, titles, searches, background tabs, and incognito activity;
 - normalized local observations and deterministic reconstruction code;
+- a source-neutral triangulation kernel that distinguishes observed, declared, derived, and user-confirmed evidence;
+- explicit source-coverage contracts, deterministic temporal fusion, coverage-gated longitudinal associations, and a rate-limited confirmation policy;
 - cumulative desktop-usage presentation with short-session and system-process noise filtering;
 - fixture location, health, and phone evidence used to develop the experience before every native collector exists;
 - correction, confidence, provenance, and capability-state foundations.
@@ -84,6 +86,17 @@ Exit condition: the Windows-only product can answer useful digital-audit questio
 
 The implementation now includes reversible device-scoped application/domain rules, editable device labels, factual 7/30/90-day audits, real week/month views, active-domain browser context, and explicit audit/emerging/established maturity gates. Packaged Windows storage is encrypted and pause/deletion controls are live.
 
+### Cross-cutting triangulation foundation (implemented)
+
+- Normalize source evidence into observed, declared, derived, or user-confirmed roles without modifying immutable raw observations.
+- Require explicit source coverage and keep missing coverage distinct from genuine zero activity.
+- Join independently observed evidence through conservative temporal rules while retaining contradictions, alternatives, confidence reasoning, and raw-observation provenance.
+- Gate cross-source longitudinal associations by coverage, source independence, repetition, variation, and maturity.
+- Select yes/no confirmations by expected information value, with quiet hours, daily limits, dismissal cooldowns, and correction invalidation.
+- Keep calendar information out of observed-source corroboration. Calendar remains a future optional declared-intent layer, not a behavioural sensor.
+
+Exit condition: deterministic scenarios can produce or block cross-source candidates for the right reasons, while Windows-only evidence remains in a truthful single-source learning state. **Met at the pure-engine level; real-source integration remains pending.**
+
 ### Phase 3 - Dedicated phone collectors and real location (deferred until a hardware path is available)
 
 - Build Android location, activity-recognition, and Usage Access collectors first where practical.
@@ -134,5 +147,6 @@ The next implementation slice is deliberately bounded:
 6. Reconcile the pre-identity Windows history into the stable local device without merging real computers. **Implemented.**
 7. Add privacy-limited active-domain browser context with secure local pairing and overlap-safe audits. **Implemented.**
 8. Defer place-aware work candidates until a dedicated location collector supplies suitable evidence.
+9. Build the source-neutral triangulation, coverage, longitudinal-association, and selective-confirmation kernel without adding fixture claims to the product. **Implemented.**
 
 This creates real infrastructure for every later phone and wearable source while producing a useful laptop-only capability now. IP and MAC-address tracking are explicitly outside the implementation plan.
