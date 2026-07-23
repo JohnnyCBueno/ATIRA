@@ -1,6 +1,6 @@
 # ATIRA development roadmap
 
-This roadmap sequences the prototype around the product's actual force multiplier: combining individually limited signals into a conservative, inspectable account of a person's life.
+This roadmap sequences the prototype around the product's actual force multiplier: combining individually limited signals into an ambitious, inspectable and progressively predictive model of a person's life. Trustworthy reconstruction is the foundation; proactive explanation and personal tendencies are the destination.
 
 ## Current checkpoint
 
@@ -97,6 +97,19 @@ The implementation now includes reversible device-scoped application/domain rule
 
 Exit condition: deterministic scenarios can produce or block cross-source candidates for the right reasons, while Windows-only evidence remains in a truthful single-source learning state. **Met at the pure-engine level; real-source integration remains pending.**
 
+### Cross-cutting personal ontology and hypothesis engine (next brain milestone)
+
+- Represent observations, reconstructed episodes, context, recurring-event clusters, hypotheses, predictions and personal tendencies in a versioned temporal event graph.
+- Construct context envelopes before, during and after every meaningful episode across immediate, daily, cyclical and longitudinal horizons.
+- Allow all consented source domains to compete for explanatory value rather than confining health to exercise, digital activity to work, or location to chronology.
+- Discover comparable episodes and personal baselines so unusual responses are judged against the user's own Monday/Wednesday/Friday calls, places, devices and routines.
+- Generate multiple plausible explanations, record supporting and contradictory evidence, and identify which future observation or yes/no answer would discriminate between them.
+- Require hypotheses to make testable predictions about subsequent comparable events; strengthen, weaken or replace them when outcomes arrive.
+- Promote repeatedly predictive hypotheses from episode judgments to recurring patterns and finally scoped personal tendencies with evidence, confidence and decay.
+- Produce a versioned decision record for every interpretation so assertive consumer language never requires an opaque engine.
+
+Exit condition: a synthetic multi-week scenario such as recurring Teams calls with different physiological responses produces competing explanations, selects between meeting-linked arousal and preceding exercise using temporal evidence, predicts a later occurrence, and changes its judgment after contradictory evidence or correction.
+
 ### Phase 3 - Dedicated phone collectors and real location (deferred until a hardware path is available)
 
 - Build Android location, activity-recognition, and Usage Access collectors first where practical.
@@ -113,6 +126,7 @@ Exit condition: a real phone can provide continuous place/movement evidence and 
 - Require enough sustained evidence and expose the observations behind each claim.
 - Learn from user corrections without turning one answer into an irreversible rule.
 - Build Patterns cuts by device, place, activity category, day, week, and month.
+- Feed episodes into the shared event graph so place and digital context can explain later health, recovery, focus and routine differences rather than remaining isolated dashboards.
 
 Exit condition: a real week can answer where computer activity occurred and make reviewable work-pattern suggestions without treating all laptop time as productive work.
 
@@ -131,6 +145,7 @@ Exit condition: health context can corroborate sleep and exercise periods withou
 - macOS desktop collector and release-grade installers/signing.
 - Calendar, audio, photos, banking, and other sources only behind separately justified narrow permissions.
 - Longitudinal Patterns and Wrapped-style summaries based on sufficiently complete data.
+- Predictive validation, competing-hypothesis review, confidence calibration and personal-tendency decay across changing life phases.
 - Validation with real users before expanding the most sensitive collectors.
 
 Exit condition: ATIRA is useful, understandable, and controllable across devices—not merely capable of collecting more data.

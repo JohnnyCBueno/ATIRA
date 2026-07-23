@@ -2,7 +2,7 @@
 
 For the full product-owner explanation, scenario ledger, confidence caveats, and repeatable quality-audit method, see [ATIRA's brain under the hood](./ONTOLOGICAL_REASONING_AUDIT.md).
 
-ATIRA reconstructs lived behaviour from limited evidence. The triangulation layer is deliberately conservative: it combines independently observed sources only when their coverage is explicit, preserves contradictions and alternatives, and never promotes declared intention into observed fact.
+ATIRA reconstructs lived behaviour from limited evidence as the foundation for an assertive personal model. The implemented kernel is deliberately bounded: it combines independently observed sources only when their coverage is explicit, preserves contradictions and alternatives, and never promotes declared intention into observed fact. The target engine then searches across immediate, daily, cyclical and longitudinal context, generates competing explanations, tests predictions and promotes repeatedly successful hypotheses into personal tendencies.
 
 ## Evidence roles
 
@@ -61,4 +61,4 @@ Confirmed candidates gain explicit user-confirmed status. Rejected candidates ha
 
 ## Current boundary
 
-This milestone is a pure, source-neutral reasoning foundation. It does not add a visual surface, connect calendar data, manufacture fixture insights, or persist confirmation prompts yet. Provider adapters will supply normalized observations and explicit coverage when real Huawei, phone, location, motion, or other sources become available.
+This milestone is a pure, source-neutral reasoning foundation. It does not yet implement the temporal event graph, recurring-event clustering, context envelopes, competing-hypothesis generator, prediction ledger or personal-tendency model described in the audit guide. Provider adapters will supply normalized observations and explicit coverage when real Huawei, phone, location, motion, or other sources become available.

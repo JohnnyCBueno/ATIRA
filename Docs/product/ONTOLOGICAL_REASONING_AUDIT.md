@@ -9,24 +9,28 @@ ATIRA's central problem is not collecting the largest possible pile of data. It 
 
 That distinction is the ontology. A foreground application is not automatically work. A calendar event is not attendance. A high heart rate is not automatically exercise. A location is not a purpose. An absent signal is not zero activity. ATIRA must preserve those boundaries even when a more confident story would look better in the interface.
 
-The current reasoning system is therefore a deterministic inference kernel, not an opaque AI model. It normalizes evidence, checks whether the relevant collectors were actually observing, combines independent sources using explicit rules, preserves contradictions, and either produces a bounded interpretation or abstains. This document explains the implemented system and the method for auditing it. It deliberately distinguishes what exists today from what ATIRA may later learn to do.
+The current reasoning system is a deterministic inference kernel, not an opaque AI model. It normalizes evidence, checks whether the relevant collectors were actually observing, combines independent sources using explicit rules, preserves contradictions, and either produces a bounded interpretation or abstains. That is the trustworthy foundation, not the limit of the product. ATIRA's intended destination is a proactive personal model that searches across the whole evidence history for explanations, makes falsifiable assertions, learns from correction and future outcomes, and progressively describes not only what a person did but how they characteristically respond to life.
 
 ## The governing philosophy
 
-ATIRA should optimize for **precision before recall**. Missing a plausible pattern is preferable to confidently inventing one. Its most important valid answer is often: *there is not enough evidence to know yet*.
+ATIRA should optimize for **explanatory value under inspectable uncertainty**. The user is authorizing the product to interpret, not merely archive. ATIRA is therefore allowed to be wrong; it is not allowed to be arbitrary, untraceable, stubborn after correction, or falsely certain about the evidence it possessed.
+
+The product should actively generate and test plausible explanations. It should make the strongest assertion justified by the current personal model, present that assertion plainly, and keep confidence, evidence, alternatives and corrections one layer beneath the headline. Abstention remains correct when collection is genuinely missing or no coherent hypothesis exists, but caution must not become an excuse to avoid useful judgment.
 
 The engine follows ten principles:
 
 1. **Evidence before story.** It records what a collector observed before assigning meaning.
-2. **Abstention is a product outcome.** `single_source`, `insufficient_coverage`, and `no_supported_interpretation` are correct results, not failures to fill the screen.
-3. **Every source has a capability boundary.** An observation cannot support a claim beyond what its collector can genuinely detect.
+2. **Interpretation is the mandate.** Every meaningful event should be tested against relevant prior, concurrent and subsequent context for explanatory relationships.
+3. **Assertions are falsifiable.** ATIRA may reach beyond a directly observed fact into an inference when it can expose why, offer competing explanations and revise the judgment later.
 4. **Independent sources matter.** Two observations from one underlying sensor are not automatically corroboration.
 5. **Coverage is evidence.** The engine must know when a collector was operating before interpreting silence.
 6. **Contradictions remain visible.** Conflicting evidence lowers confidence; it is not silently discarded to protect a narrative.
 7. **Declared intention is not observed behaviour.** Calendar data may describe anticipation, never completed reality by itself.
 8. **Confirmation corrects an instance.** A user's yes or no outranks the candidate interpretation for that event, but does not prove a universal rule about the user.
-9. **Association is not causation.** Longitudinal co-movement may be useful without proving that one factor caused another.
-10. **Raw evidence remains reproducible.** Derived facts and interpretations must retain lineage back to immutable observations.
+9. **Patterns should predict.** A hypothesis becomes valuable when it explains prior events and improves predictions about comparable future events.
+10. **Personal character is a living model.** Repeated routines, reactions and recovery patterns may support assertive statements about tendencies, but those tendencies retain evidence, scope, confidence and a capacity to change.
+
+Evidence boundaries still matter: direct observation, interpretation and personal tendency are different ontological layers. The solution is not to flatten them into equally timid copy. It is to let the user see a clear conclusion while keeping the reasoning layer honest and auditable.
 
 ## The reasoning pipeline
 
@@ -59,6 +63,84 @@ There are two separate reasoning clocks:
 - **Longitudinal analysis** asks whether measurements repeatedly move together over days or months.
 
 A plausible moment does not automatically become a life pattern. A longitudinal correlation does not rewrite the underlying moments as causal facts.
+
+## Target architecture: a living personal event graph
+
+The implemented pairwise rules are scaffolding. The destination is not a catalogue of isolated rules such as “phone plus idle equals attention shift.” It is a time-aware event graph in which every recorded action can become context for every other action when the relationship has potential explanatory value.
+
+The graph contains several kinds of node:
+
+- raw observations from devices and providers;
+- reconstructed episodes such as a call, commute, focused work block, workout, sleep period or place visit;
+- surrounding states such as sleep debt, recent movement, location, interaction intensity and time of week;
+- recurring-event clusters such as “the Wednesday Teams call” even before ATIRA understands its social meaning;
+- hypotheses explaining an episode or difference between comparable episodes;
+- learned personal tendencies that summarize repeated and predictive responses.
+
+Edges describe relationships rather than assuming causation: overlaps, precedes, follows, occurs at, occurs on, uses device, belongs to recurring cluster, differs from personal baseline, is compatible with, contradicts, predicts, and was confirmed or rejected by the user.
+
+“Consider every datapoint” does not mean blindly comparing every row with every other row forever. That would create combinatorial noise. It means no source is siloed by domain and every event is evaluated through multiple time horizons:
+
+| Horizon | Questions ATIRA asks |
+| --- | --- |
+| Immediate | What was happening during the event and in the minutes immediately before and after it? |
+| Daily | Did sleep, movement, place, meals, travel, prior work, digital intensity or recovery earlier that day change this event? |
+| Cyclical | How does this event compare with the same weekday, recurring call, place, application pattern or routine? |
+| Longitudinal | Does the relationship repeat across 28, 90 or more days, and does it predict future occurrences? |
+| Personal-history | Is this typical for this person, device, place and life phase, rather than typical in a generic population? |
+
+For each reconstructed episode, the future engine should build a context envelope containing before, during and after features; deviations from personal baselines; comparable-event controls; missing coverage; and candidate lagged relationships. It should then generate competing hypotheses, rank them by explanatory and predictive value, and update them as subsequent evidence arrives.
+
+The engine therefore becomes progressive:
+
+1. **Episode:** “A 60-minute Teams session occurred.”
+2. **Contrast:** “This recurring Wednesday session produced a larger heart-rate response than the Monday and Friday sessions.”
+3. **Hypothesis:** “The response may reflect meeting-related arousal, recent exercise, caffeine, sleep debt or another preceding condition.”
+4. **Discrimination:** Timing and other sources make some explanations more plausible and others less plausible.
+5. **Prediction:** The leading explanation predicts what should happen before, during or after the next comparable session.
+6. **Personal tendency:** Repeated accurate predictions support a broader statement about how this person anticipates, responds to and recovers from this class of situation.
+
+This is how ATIRA moves from passive day reconstruction toward a model of character without pretending that character is a fixed essence.
+
+## Assertion ladder
+
+ATIRA should not attach a disclaimer to every sentence. Instead, it should choose a statement from an explicit ladder and expose the reasoning on demand:
+
+| Level | Product behaviour | Example |
+| --- | --- | --- |
+| Observation | State the measured fact | “Your heart rate rose 24 bpm during Wednesday's Teams call.” |
+| Active hypothesis | Make a useful provisional judgment | “Wednesday's call appears more physiologically demanding than your other recurring calls.” |
+| Established pattern | State a repeated relationship directly | “Wednesday is consistently your most physiologically demanding recurring meeting.” |
+| Personal tendency | Describe a stable, scoped behavioural characteristic | “You show anticipatory arousal and slower recovery around this class of high-stakes interaction.” |
+
+The headline is assertive. “Why ATIRA thinks this” contains the evidence, baseline, comparisons, coverage, alternatives, prediction record and corrections. A confidence label describes maturity without forcing the user to parse defensive wording.
+
+The final level requires more than repeated correlation. It needs stable recurrence across enough comparable situations, discriminating evidence against obvious alternatives, successful prediction on later events, and resistance to one-off context changes. Personal tendencies should also decay or be re-estimated when recent behaviour changes.
+
+## Worked example: three recurring Teams calls
+
+Assume the user has one-hour Teams sessions every Monday, Wednesday and Friday. ATIRA notices a heart-rate spike during Wednesday's session.
+
+A siloed engine would either ignore the health signal because the activity is sedentary or report the coincidence without trying to explain it. The intended engine does considerably more:
+
+1. It clusters the three sessions as comparable recurring digital episodes using application, duration, cadence, device and optional declared calendar context.
+2. It constructs context envelopes for each occurrence: heart-rate baseline and curve, motion, workout records, sleep, location, computer interaction intensity, phone activity, preceding applications, time since waking and post-call recovery.
+3. It compares Wednesday with that user's Monday and Friday calls, not merely with a population average.
+4. It distinguishes **onset shape**. A heart rate already elevated before the call with recent motion supports the exercise explanation. A rise beginning at call onset without motion supports meeting-linked arousal. A pre-call rise across repeated weeks suggests anticipation. Slow post-call recovery adds another characteristic.
+5. It generates competing hypotheses rather than prematurely selecting one: meeting importance or hierarchy, preceding exercise, caffeine or meal timing, poor sleep, rushing to join, environmental heat, sensor error, or an unobserved factor.
+6. It looks for discriminating evidence. Calendar title or participant context may support meeting identity but remains declared/contextual. Motion and workout evidence test the exercise explanation. Sleep tests fatigue. Similar physiological responses in other meetings with the same people may strengthen a social-context explanation.
+7. If the distinction remains valuable but unresolved, it asks one cheap question such as: “Is Wednesday's call more important or senior than your other recurring calls?”
+8. It predicts the next Wednesday response. Repeated success promotes the hypothesis; failure, contradictory context or a user rejection weakens or replaces it.
+
+The eventual output can be direct:
+
+> Wednesday's recurring call is your most physiologically demanding meeting. Your heart rate begins rising before it starts and takes longer to settle afterwards; this pattern has repeated in 8 of the last 10 sufficiently observed weeks. Exercise does not explain 7 of those occurrences.
+
+If evidence later shows that the user consistently exercises before Wednesday's call, the judgment should change:
+
+> The elevated heart rate around Wednesday's call is primarily explained by your pre-call workout, not the meeting itself.
+
+Both are valuable judgments. The intelligence lies in actively attempting the explanation, distinguishing alternatives, and changing its mind for a reason.
 
 ## The evidence vocabulary
 
@@ -326,7 +408,7 @@ Organic collection should remain passive. Ground truth can be gathered through a
 - preserve corrections and the exact engine version that produced the candidate;
 - review false positives before expanding recall or adding new rules.
 
-The objective is not to maximize agreement. It is to discover where a source or rule is over-claiming.
+The objective is not to maximize agreement or suppress every mistake. It is to discover which kinds of ambitious judgment produce new explanatory value, which are merely obvious, which are wrong for systematic reasons, and whether corrections improve later predictions.
 
 ### Layer 5: 30-day and 90-day reviews
 
@@ -334,11 +416,14 @@ At 30 days, review whether emerging associations survive coverage and correction
 
 ## Reasoning quality scorecard
 
-The primary optimization target is a low false-assertion rate, not a high number of insights.
+The primary optimization target is **net explanatory value**: how often ATIRA reveals something useful, non-obvious and later supported, while keeping mistakes understandable and correctable. A product that never makes a false assertion because it never makes an assertion has failed.
 
 | Measure | What it audits | Initial target |
 | --- | --- | --- |
-| False assertion rate | User-rejected or demonstrably unsupported claims | Minimize before expanding rule coverage |
+| Discovery yield | Reviewed assertions that are useful and non-obvious to the user | Increase without hiding uncertainty |
+| Predictive validity | Hypotheses that correctly anticipate later comparable events | Increase by maturity level |
+| Explanatory lift | Added predictive/explanatory power versus time, weekday and personal-baseline models | Must outperform simpler baselines |
+| False assertion rate | User-rejected or demonstrably unsupported claims | Monitor by assertion level and learn from clusters of error |
 | Coverage integrity | Claims emitted when a required source was missing | Zero |
 | Provenance completeness | Outputs traceable to raw observations, coverage, rule, and score components | 100% |
 | Correction recurrence | The same rejected interpretation recurring without new justification | Zero |
@@ -348,6 +433,9 @@ The primary optimization target is a low false-assertion rate, not a high number
 | Confirmation yield | Eligible prompts that produce a useful accepted/rejected answer | Monitor; do not optimize by nagging |
 | Confidence calibration | Whether score bands correspond to empirical acceptance rates | Measure after enough confirmed examples |
 | Explanation fidelity | Plain-language explanation matches the actual inputs and rule | 100% in reviewed samples |
+| Hypothesis diversity | Material alternatives generated and tested for an unusual event | At least one genuine alternative for interpretive claims |
+| Correction learning | Future comparable predictions improve after correction | Required before claiming personalization |
+| Tendency stability | Character-level claims survive new samples yet adapt to real behavioural change | Review across 90-day windows |
 | Time to useful insight | Days and sources needed before a user finds a pattern valuable | Evaluate at 30 and 90 days |
 
 When enough labelled outcomes exist, confidence calibration should be evaluated by score band and with a proper scoring measure such as Brier score. Until then, confidence remains an inspectable ordering heuristic.
@@ -383,11 +471,12 @@ The following are known limitations, not hidden implementation details:
 - Collector coverage windows are part of the reasoning contract but are not yet fully emitted and persisted across all collectors.
 - Rule thresholds and confidence weights are engineering priors, not empirically calibrated probabilities.
 - Only four narrow moment rules exist.
+- The living event graph, context envelopes, recurring-event clustering, hypothesis competition and prediction ledger described above are target architecture, not implemented code.
 - Source independence is currently coarser than a complete sensor/provider dependency graph.
 - Confirmation history is evaluated by the pure policy but is not yet a durable, synced learning system.
 - Longitudinal analysis uses Pearson correlation and does not yet control for confounding, trends, seasonality, autocorrelation, or multiple testing.
 - A user confirmation sets the candidate instance to confirmed; broader learning from repeated confirmations needs its own explicit contract.
-- There is no causal model, medical inference system, or hidden LLM deciding what happened.
+- There is no causal model, hypothesis generator, learned personal-tendency model, medical inference system, or hidden LLM deciding what happened yet.
 - Rule and model versioning must be added before insights are persisted as durable product claims.
 
 These limitations define the next work rather than invalidate the foundation. The engine already encodes the essential discipline: preserve epistemic boundaries, require coverage and independent support, expose contradictions, and abstain when the evidence cannot carry the claim.
