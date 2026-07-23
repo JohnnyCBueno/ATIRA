@@ -2,12 +2,17 @@
 
 This build is an early sensor-validation milestone, not a release candidate. It exists to test the parts the web preview cannot: Apple permissions, Core Location, background delivery, encrypted native SQLite, cold launches, and battery behaviour.
 
+For borrowed-Mac preparation, free Personal Team signing, exact environment gates, field protocol, HealthKit sequencing, and the fresh-Codex handoff, follow [the Mac sprint runbook](./development/MAC_SPRINT_RUNBOOK.md).
+
 ## Before the first build
 
 - Choose a permanent, globally unique iOS bundle identifier, for example `com.yourcompany.atira`.
 - Use an Expo account you control. Sign in locally with `npx eas-cli login`; never put account passwords or two-factor codes in this repository.
-- Join the Apple Developer Program using the Apple ID that will own the application.
+- For an EAS/internal-distribution build, join the Apple Developer Program using the Apple ID that will own the application.
+- Without paid membership, use local Xcode/Expo CLI compilation on a Mac and the owner's Personal Team. The provisioning profile and installed app expire after seven days.
 - Enable Developer Mode on the test iPhone.
+
+The configured ATIRA bundle identifier is `com.johnnycomins.atira`.
 
 ## Account linking and device registration
 
@@ -36,6 +41,15 @@ npm run start:dev-client
 ```
 
 The phone and laptop can use the same network. If LAN discovery is unreliable, start Expo with a tunnel instead.
+
+For the free Personal Team path on the Mac:
+
+```text
+npx expo run:ios --device
+npx expo run:ios --configuration Release --device
+```
+
+The first command creates the iterative Debug development build. The Release configuration embeds the JavaScript bundle for a disconnected field test; it is not an App Store distribution build.
 
 ## First field test
 
