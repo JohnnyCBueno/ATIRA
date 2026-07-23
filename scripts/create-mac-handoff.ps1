@@ -17,7 +17,10 @@ try {
     $checksumPath = "$bundlePath.sha256"
     $manifestPath = Join-Path $handoffDirectory "ATIRA-$stamp.txt"
 
-    git bundle create $bundlePath --all
+    # Bundle only the canonical branch. Local tooling may create private refs
+    # that are not part of the project and must not travel with the handoff.
+    $branch = git branch --show-current
+    git bundle create $bundlePath $branch
     git bundle verify $bundlePath
 
     $checksum = (Get-FileHash -Algorithm SHA256 -LiteralPath $bundlePath).Hash.ToLowerInvariant()
@@ -25,7 +28,7 @@ try {
 
     @(
         "commit=$(git rev-parse HEAD)"
-        "branch=$(git branch --show-current)"
+        "branch=$branch"
         "createdUtc=$([DateTime]::UtcNow.ToString('o'))"
         "bundle=$([System.IO.Path]::GetFileName($bundlePath))"
         "sha256=$checksum"
