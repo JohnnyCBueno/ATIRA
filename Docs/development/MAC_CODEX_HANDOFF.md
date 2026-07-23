@@ -2,7 +2,7 @@
 
 Paste the following into the new Codex task after the private repository has been cloned and opened:
 
-> You are working on ATIRA from a borrowed Mac. Read `AGENTS.md` completely, then read `Docs/development/MAC_SPRINT_RUNBOOK.md`, `Docs/FIRST_IPHONE_BUILD.md`, `Docs/product/PRODUCT_CHARTER.md`, and `Docs/decisions/0003-local-first-data-layer.md`. This repository uses Expo SDK 57; consult the exact versioned Expo documentation before changing code.
+> You are working on ATIRA from a borrowed Mac. Read `AGENTS.md` completely, then read `Docs/development/MAC_SPRINT_RUNBOOK.md`, `Docs/FIRST_IPHONE_BUILD.md`, `Docs/product/PRODUCT_CHARTER.md`, `Docs/decisions/0003-local-first-data-layer.md`, and `Docs/decisions/0011-collector-resilience-and-tracking-assurance.md`. This repository uses Expo SDK 57; consult the exact versioned Expo documentation before changing code.
 >
 > First inspect `git status`, the current branch/commit, `origin`, macOS/Xcode/Node/CocoaPods versions, available storage, and whether the owner's iPhone is visible. Run `./scripts/macos-preflight.sh`; do not mutate the project until you report its failures. Then run `./scripts/macos-bootstrap.sh`.
 >
