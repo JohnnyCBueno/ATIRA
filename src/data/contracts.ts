@@ -86,11 +86,22 @@ export interface CollectorRecord {
   updatedAt: string;
 }
 
+export type CollectorOperationalState = 'collecting' | 'paused' | 'offline' | 'unknown';
+export type CollectorBackfillState = 'not_supported' | 'supported' | 'in_progress' | 'complete';
+
 export interface CollectorStatus {
   source: EvidenceSource;
   state: CapabilityState;
   detail: string;
   lastObservedAt?: string;
+  /** The most recent successful import into ATIRA's local repository. */
+  lastSyncedAt?: string;
+  /** What the collector itself reports, kept separate from data coverage. */
+  operationalState?: CollectorOperationalState;
+  /** Expected interval between collector health checks or heartbeats. */
+  expectedHeartbeatSeconds?: number;
+  /** Whether this source can later fill a gap from provider-held history. */
+  backfillState?: CollectorBackfillState;
   coverage?: number;
   updatedAt: string;
 }
@@ -140,43 +151,55 @@ export interface TimelineRepository {
   getDiagnostics(): Promise<RepositoryDiagnostics>;
 }
 
-export const DATABASE_SCHEMA_VERSION = 6;
+export const DATABASE_SCHEMA_VERSION = 7;
 
 export const initialCollectorStatuses: CollectorStatus[] = [
   {
     source: 'location',
     state: 'permission_required',
     detail: 'Ready to request foreground permission on a development build.',
+    operationalState: 'unknown',
+    backfillState: 'not_supported',
     updatedAt: new Date(0).toISOString(),
   },
   {
     source: 'motion',
     state: 'permission_required',
     detail: 'Motion capability has not been evaluated on this device.',
+    operationalState: 'unknown',
+    backfillState: 'not_supported',
     updatedAt: new Date(0).toISOString(),
   },
   {
     source: 'phone',
     state: 'available_limited',
     detail: 'Phone usage collector is not connected in this runtime.',
+    operationalState: 'unknown',
+    backfillState: 'not_supported',
     updatedAt: new Date(0).toISOString(),
   },
   {
     source: 'health',
     state: 'permission_required',
     detail: 'Health provider has not been connected.',
+    operationalState: 'unknown',
+    backfillState: 'supported',
     updatedAt: new Date(0).toISOString(),
   },
   {
     source: 'calendar',
     state: 'permission_required',
     detail: 'Calendar permission has not been requested.',
+    operationalState: 'unknown',
+    backfillState: 'supported',
     updatedAt: new Date(0).toISOString(),
   },
   {
     source: 'desktop',
     state: 'temporarily_unavailable',
     detail: 'Desktop companion has not been paired.',
+    operationalState: 'offline',
+    backfillState: 'complete',
     updatedAt: new Date(0).toISOString(),
   },
 ];

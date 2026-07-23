@@ -7,6 +7,8 @@ const REQUEST_TIMEOUT_MS = 1800;
 interface DesktopCompanionHealth {
   running: boolean;
   platform: string;
+  startedAt: string;
+  samplingIntervalMs: number;
   completedObservationCount: number;
   currentSession: { state: string; application: string | null } | null;
   device: DeviceRecord;
@@ -77,12 +79,27 @@ export async function unpairBrowserIntegration() {
 
 export async function inspectDesktopCollector(): Promise<CollectorStatus> {
   try {
+    const control = await inspectDesktopCollectionControl();
+    if (control.available && control.paused) {
+      return {
+        source: 'desktop',
+        state: 'missing_coverage',
+        detail: 'Windows collection is paused by you. ATIRA will preserve this as a coverage gap rather than treating it as zero activity.',
+        operationalState: 'paused',
+        expectedHeartbeatSeconds: 120,
+        backfillState: 'complete',
+        updatedAt: new Date().toISOString(),
+      };
+    }
     const health = await fetchJson<DesktopCompanionHealth>('/health');
     const current = health.currentSession?.application ?? health.currentSession?.state ?? 'waiting for first sample';
     return {
       source: 'desktop',
       state: 'available_limited',
       detail: `${health.device.label} is running locally. Current state: ${current}. Window titles are ${health.privacy.windowTitles ? 'enabled' : 'off'}.`,
+      operationalState: health.running ? 'collecting' : 'offline',
+      expectedHeartbeatSeconds: Math.max(30, Math.ceil(health.samplingIntervalMs / 1_000) * 4),
+      backfillState: 'complete',
       updatedAt: new Date().toISOString(),
     };
   } catch {
@@ -90,6 +107,9 @@ export async function inspectDesktopCollector(): Promise<CollectorStatus> {
       source: 'desktop',
       state: 'temporarily_unavailable',
       detail: 'Windows companion is not running. Start it with: npm run desktop:collector',
+      operationalState: 'offline',
+      expectedHeartbeatSeconds: 120,
+      backfillState: 'complete',
       updatedAt: new Date().toISOString(),
     };
   }
@@ -123,6 +143,10 @@ export async function syncDesktopObservations(repository: TimelineRepository): P
     state: 'available_full',
     detail: `Synced ${added} new desktop session${added === 1 ? '' : 's'} from ${device.label}.`,
     lastObservedAt,
+    lastSyncedAt: new Date().toISOString(),
+    operationalState: 'collecting',
+    expectedHeartbeatSeconds: 120,
+    backfillState: 'complete',
     updatedAt: new Date().toISOString(),
   };
   await repository.upsertCollectorStatus(status);
@@ -136,6 +160,9 @@ export async function inspectHuaweiHealthConnector(): Promise<CollectorStatus> {
       source: 'health',
       state: status.connected ? 'available_limited' : 'permission_required',
       detail: `${status.detail}${status.routeScopeRequested ? ' Workout-route permission is included.' : ' Workout routes are not requested by default.'}`,
+      operationalState: status.connected ? 'collecting' : 'unknown',
+      expectedHeartbeatSeconds: 86_400,
+      backfillState: 'supported',
       updatedAt: new Date().toISOString(),
     };
   } catch {
@@ -143,6 +170,9 @@ export async function inspectHuaweiHealthConnector(): Promise<CollectorStatus> {
       source: 'health',
       state: 'temporarily_unavailable',
       detail: 'HUAWEI Health setup is available through the Windows companion when it is running.',
+      operationalState: 'offline',
+      expectedHeartbeatSeconds: 86_400,
+      backfillState: 'supported',
       updatedAt: new Date().toISOString(),
     };
   }
@@ -157,6 +187,9 @@ export async function connectOrSyncHuaweiHealth(repository: TimelineRepository):
       source: 'health',
       state: 'permission_required',
       detail: 'Complete HUAWEI ID authorization in the browser, then return to ATIRA. Health import will begin automatically.',
+      operationalState: 'unknown',
+      expectedHeartbeatSeconds: 86_400,
+      backfillState: 'supported',
       updatedAt: new Date().toISOString(),
     };
   }
@@ -175,6 +208,10 @@ export async function syncHuaweiHealthObservations(repository: TimelineRepositor
     state: 'available_full',
     detail: `Imported ${added} new HUAWEI Health workout${added === 1 ? '' : 's'} from the last seven days. Sleep, heart-rate, and step sample queries are the next connector slice.`,
     lastObservedAt: observations.at(-1)?.endedAt ?? observations.at(-1)?.startedAt,
+    lastSyncedAt: new Date().toISOString(),
+    operationalState: 'collecting',
+    expectedHeartbeatSeconds: 86_400,
+    backfillState: 'supported',
     updatedAt: new Date().toISOString(),
   };
   await repository.upsertCollectorStatus(status);

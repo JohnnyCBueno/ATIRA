@@ -19,6 +19,9 @@ if (Platform.OS !== 'web') {
         source: 'location',
         state: 'temporarily_unavailable',
         detail: error.message,
+        operationalState: 'offline',
+        expectedHeartbeatSeconds: 900,
+        backfillState: 'not_supported',
         updatedAt: now,
       });
       return;
@@ -31,6 +34,10 @@ if (Platform.OS !== 'web') {
       state: 'available_full',
       detail: `Background collector stored ${observations.length} new sample${observations.length === 1 ? '' : 's'}.`,
       lastObservedAt: observations[observations.length - 1].startedAt,
+      lastSyncedAt: now,
+      operationalState: 'collecting',
+      expectedHeartbeatSeconds: 900,
+      backfillState: 'not_supported',
       updatedAt: now,
     });
   });

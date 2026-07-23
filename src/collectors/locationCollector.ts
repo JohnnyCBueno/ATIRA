@@ -14,16 +14,16 @@ export async function inspectLocationCollector(): Promise<CollectorStatus> {
   const now = new Date().toISOString();
   const servicesEnabled = await Location.hasServicesEnabledAsync();
   if (!servicesEnabled) {
-    return { source: 'location', state: 'temporarily_unavailable', detail: 'Device location services are switched off.', updatedAt: now };
+    return { source: 'location', state: 'temporarily_unavailable', detail: 'Device location services are switched off.', operationalState: 'offline', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
   }
   const permission = await Location.getForegroundPermissionsAsync();
   if (permission.status === 'granted') {
-    return { source: 'location', state: 'available_limited', detail: 'Foreground location is allowed; continuous collection is not running.', updatedAt: now };
+    return { source: 'location', state: 'available_limited', detail: 'Foreground location is allowed; continuous collection is not running.', operationalState: 'unknown', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
   }
   if (permission.status === 'denied' && !permission.canAskAgain) {
-    return { source: 'location', state: 'permission_denied', detail: 'Location is blocked in system settings.', updatedAt: now };
+    return { source: 'location', state: 'permission_denied', detail: 'Location is blocked in system settings.', operationalState: 'unknown', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
   }
-  return { source: 'location', state: 'permission_required', detail: 'Tap to store one real location observation locally.', updatedAt: now };
+  return { source: 'location', state: 'permission_required', detail: 'Tap to store one real location observation locally.', operationalState: 'unknown', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
 }
 
 export async function captureCurrentLocation(repository: TimelineRepository): Promise<CollectorStatus> {
@@ -34,6 +34,9 @@ export async function captureCurrentLocation(repository: TimelineRepository): Pr
       source: 'location',
       state: permission.canAskAgain ? 'permission_required' : 'permission_denied',
       detail: permission.canAskAgain ? 'Location was not allowed.' : 'Location is blocked in system settings.',
+      operationalState: 'unknown',
+      expectedHeartbeatSeconds: 900,
+      backfillState: 'not_supported',
       updatedAt: now,
     };
     await repository.upsertCollectorStatus(status);
@@ -58,6 +61,10 @@ export async function captureCurrentLocation(repository: TimelineRepository): Pr
         ? 'One fresh location sample was stored locally. Background collection remains off.'
         : 'A recent cached location sample was stored because a fresh fix was unavailable.',
       lastObservedAt: observation.startedAt,
+      lastSyncedAt: new Date().toISOString(),
+      operationalState: 'unknown',
+      expectedHeartbeatSeconds: 900,
+      backfillState: 'not_supported',
       updatedAt: new Date().toISOString(),
     };
     await repository.upsertCollectorStatus(status);
@@ -70,6 +77,9 @@ export async function captureCurrentLocation(repository: TimelineRepository): Pr
       source: 'location',
       state: 'temporarily_unavailable',
       detail,
+      operationalState: 'offline',
+      expectedHeartbeatSeconds: 900,
+      backfillState: 'not_supported',
       updatedAt: new Date().toISOString(),
     };
     await repository.upsertCollectorStatus(status);
@@ -84,6 +94,9 @@ export async function startBackgroundLocation(repository: TimelineRepository): P
       source: 'location',
       state: 'unsupported_device',
       detail: 'Continuous background location requires an ATIRA development build.',
+      operationalState: 'unknown',
+      expectedHeartbeatSeconds: 900,
+      backfillState: 'not_supported',
       updatedAt: now,
     };
     await repository.upsertCollectorStatus(status);
@@ -112,6 +125,9 @@ export async function startBackgroundLocation(repository: TimelineRepository): P
     source: 'location',
     state: 'available_full',
     detail: 'Background location collection is running.',
+    operationalState: 'collecting',
+    expectedHeartbeatSeconds: 900,
+    backfillState: 'not_supported',
     updatedAt: now,
   };
   await repository.upsertCollectorStatus(status);
@@ -123,6 +139,9 @@ async function captureDeniedBackgroundStatus(repository: TimelineRepository, can
     source: 'location',
     state: canAskAgain ? 'permission_required' : 'permission_denied',
     detail: canAskAgain ? 'Background location was not allowed.' : 'Background location is blocked in system settings.',
+    operationalState: 'unknown',
+    expectedHeartbeatSeconds: 900,
+    backfillState: 'not_supported',
     updatedAt: new Date().toISOString(),
   };
   await repository.upsertCollectorStatus(status);

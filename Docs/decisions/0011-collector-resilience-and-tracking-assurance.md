@@ -32,6 +32,8 @@ The visible ATIRA application coordinates collectors but is not their sole owner
 
 Every connector supports retrospective ingestion when its source retains history. It maintains a cursor or stable sample identity, backfills after interruption, and avoids duplicating immutable raw observations.
 
+The shared collector-status contract persists the operational state, last observed time, last local sync, expected heartbeat cadence, and backfill capability separately from the source's evidence. A source-neutral health assessment can therefore report healthy, delayed, paused, offline, setup-required, or coverage-gap states without confusing a live heartbeat with proof of historical coverage.
+
 ### Treat location as the exceptional live source
 
 There is no general historical phone-GPS store ATIRA can query after a missed interval. The production location collector therefore combines:

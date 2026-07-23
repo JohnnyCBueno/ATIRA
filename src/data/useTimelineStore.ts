@@ -4,6 +4,7 @@ import { DayRecord, DigitalActivityRule, TimelineEvent } from '../domain/types';
 import { syntheticMultiDayLocationTrace } from '../fixtures/syntheticLocationTrace';
 import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
+import { assessCollectorHealth } from '../collectors/collectorHealth';
 import { BrowserIntegrationStatus, connectOrSyncHuaweiHealth, createBrowserPairingCode, deleteDesktopCollectorHistory, inspectBrowserIntegration, inspectDesktopCollectionControl, inspectDesktopCollector, inspectHuaweiHealthConnector, setDesktopCollectionPaused, syncDesktopObservations, syncHuaweiHealthObservations, unpairBrowserIntegration } from '../collectors/desktopCollectorClient';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
 import { desktopDayResultsToRecord, reconstructDesktopActivity } from '../reconstruction/desktopActivityEngine';
@@ -34,6 +35,7 @@ export function useTimelineStore() {
   const [desktopControl, setDesktopControl] = useState({ available: false, paused: false, running: false });
   const [browserIntegration, setBrowserIntegration] = useState<BrowserIntegrationStatus>({ paired: false, pairedAt: null, lastObservedAt: null, available: false, connectedBrowserCount: 0, browsers: [] });
   const desktopSyncInFlight = useRef(false);
+  const collectorHealth = useMemo(() => collectorStatuses.map((status) => assessCollectorHealth(status)), [collectorStatuses]);
 
   const refresh = useCallback(async () => {
     const [storedDays, statuses, repositoryDiagnostics, storedSegments, storedObservations, storedDevices, storedRules] = await Promise.all([
@@ -292,6 +294,7 @@ export function useTimelineStore() {
   return {
     days,
     collectorStatuses,
+    collectorHealth,
     diagnostics,
     loading,
     error,

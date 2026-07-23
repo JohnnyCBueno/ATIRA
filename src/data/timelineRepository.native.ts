@@ -65,6 +65,10 @@ interface CollectorRow {
   state: CapabilityState;
   detail: string;
   last_observed_at: string | null;
+  last_synced_at: string | null;
+  operational_state: CollectorStatus['operationalState'] | null;
+  expected_heartbeat_seconds: number | null;
+  backfill_state: CollectorStatus['backfillState'] | null;
   coverage: number | null;
   updated_at: string;
 }
@@ -194,6 +198,10 @@ async function migrate(database: SQLite.SQLiteDatabase) {
         state TEXT NOT NULL,
         detail TEXT NOT NULL,
         last_observed_at TEXT,
+        last_synced_at TEXT,
+        operational_state TEXT,
+        expected_heartbeat_seconds INTEGER,
+        backfill_state TEXT,
         coverage REAL,
         updated_at TEXT NOT NULL
       );
@@ -327,6 +335,14 @@ async function migrate(database: SQLite.SQLiteDatabase) {
     currentVersion = 5;
   }
 
+  if (currentVersion < 7) {
+    await ensureColumn(database, 'collector_status', 'last_synced_at', 'TEXT');
+    await ensureColumn(database, 'collector_status', 'operational_state', 'TEXT');
+    await ensureColumn(database, 'collector_status', 'expected_heartbeat_seconds', 'INTEGER');
+    await ensureColumn(database, 'collector_status', 'backfill_state', 'TEXT');
+    currentVersion = 7;
+  }
+
   await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
 }
 
@@ -401,12 +417,16 @@ async function seedIfEmpty(database: SQLite.SQLiteDatabase, seedDays: DayRecord[
     }
     for (const status of initialCollectorStatuses) {
       await transaction.runAsync(
-        `INSERT INTO collector_status (source, state, detail, last_observed_at, coverage, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO collector_status (source, state, detail, last_observed_at, last_synced_at, operational_state, expected_heartbeat_seconds, backfill_state, coverage, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         status.source,
         status.state,
         status.detail,
         status.lastObservedAt ?? null,
+        status.lastSyncedAt ?? null,
+        status.operationalState ?? null,
+        status.expectedHeartbeatSeconds ?? null,
+        status.backfillState ?? null,
         status.coverage ?? null,
         status.updatedAt,
       );
@@ -788,6 +808,10 @@ class NativeTimelineRepository implements TimelineRepository {
       state: row.state,
       detail: row.detail,
       lastObservedAt: row.last_observed_at ?? undefined,
+      lastSyncedAt: row.last_synced_at ?? undefined,
+      operationalState: row.operational_state ?? undefined,
+      expectedHeartbeatSeconds: row.expected_heartbeat_seconds ?? undefined,
+      backfillState: row.backfill_state ?? undefined,
       coverage: row.coverage ?? undefined,
       updatedAt: row.updated_at,
     }));
@@ -796,18 +820,26 @@ class NativeTimelineRepository implements TimelineRepository {
   async upsertCollectorStatus(status: CollectorStatus) {
     const database = await getDatabase();
     await database.runAsync(
-      `INSERT INTO collector_status (source, state, detail, last_observed_at, coverage, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO collector_status (source, state, detail, last_observed_at, last_synced_at, operational_state, expected_heartbeat_seconds, backfill_state, coverage, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(source) DO UPDATE SET
          state = excluded.state,
          detail = excluded.detail,
          last_observed_at = excluded.last_observed_at,
+         last_synced_at = excluded.last_synced_at,
+         operational_state = excluded.operational_state,
+         expected_heartbeat_seconds = excluded.expected_heartbeat_seconds,
+         backfill_state = excluded.backfill_state,
          coverage = excluded.coverage,
          updated_at = excluded.updated_at`,
       status.source,
       status.state,
       status.detail,
       status.lastObservedAt ?? null,
+      status.lastSyncedAt ?? null,
+      status.operationalState ?? null,
+      status.expectedHeartbeatSeconds ?? null,
+      status.backfillState ?? null,
       status.coverage ?? null,
       status.updatedAt,
     );
