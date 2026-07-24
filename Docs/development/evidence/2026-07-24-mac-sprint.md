@@ -103,3 +103,33 @@ Do not force-quit ATIRA before the positive retest.
 - Xcode reports the Expo Dev Launcher Release script has ambiguous dependencies and therefore runs every build.
 - The linker reports a duplicate `-lc++` library entry.
 - The app delegate advertises a remote-notification callback while `remote-notification` is absent from `UIBackgroundModes`. This sprint did not add notification-driven collection; the location background mode is present and verified.
+
+## Post-Gate feature branch: timeline map and local-data reliability
+
+Work continued on `codex/timeline-map-data-reliability` from master commit `afdcd24`. The installed corrected Release build was not rebuilt or replaced, so the pending Gate 7 field retest remains valid.
+
+Local-data reliability changes:
+
+- Native SQLite now waits briefly for transient locks and retries only lock/busy failures.
+- Failed database-opening promises are cleared so the visible retry action can make a genuine second attempt.
+- Encryption, schema and storage failures are not retried blindly.
+- Startup messages are privacy-safe and do not expose raw database details.
+- Location reconstruction now creates or updates its Timeline day instead of leaving stored segments invisible, while preserving existing desktop activity and corrected events.
+
+Timeline map changes:
+
+- Synthetic location evidence can be filtered by journeys, stays and coverage gaps.
+- Routes, map targets and timeline rows share one selected-evidence state.
+- The abstract local map supports bounded pan, zoom and overview controls without adding a third-party map provider or API key.
+- Coordinates remain hidden, synthetic evidence remains explicitly labelled, and missing coverage is not reported as measured travel.
+- The true no-location state remains available for days without reconstructable location evidence.
+
+Validation:
+
+- TypeScript passed.
+- All 74 application tests passed across 18 test files.
+- All 17 desktop and collector tests passed.
+- Expo SDK 57 web export passed.
+- Browser QA passed at phone, tablet and desktop sizes.
+- A fresh browser session selected a route directly from the map and reported no console errors.
+- The built-in synthetic trace produced 108 local observations across five visible days, three anonymous place clusters, and no committed raw samples.

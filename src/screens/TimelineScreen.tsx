@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
 import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
+import { InteractiveRouteMap } from '../components/InteractiveRouteMap';
 import { TimelineEventCard } from '../components/TimelineEventCard';
 import { LocationSegmentRecord, ObservationOrigin } from '../data/contracts';
 import { DayPlace, DayRecord, DesktopUsageSummary, DigitalActivityCategory, TimelineEvent } from '../domain/types';
 import { KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
-import { projectLocationSegments, projectedPath } from '../reconstruction/locationMapProjection';
 import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
+import { formatClock, locationSegmentDetail, locationSegmentTitle } from '../reconstruction/locationSegmentPresentation';
 import { colours, radius, shadow } from '../theme';
 
 type PeriodScale = 'day' | 'week' | 'month';
@@ -46,72 +46,8 @@ function PeriodPicker({ value, onChange }: { value: PeriodScale; onChange: (valu
 const clusterColours = ['#6B6789', colours.moss, colours.coral, '#A45E42', colours.blue];
 const emptyKnownPlaceClustering: KnownPlaceClusteringResult = { places: [], assignments: [] };
 
-function RouteMap({ day, segments, knownPlaceClustering }: { day: DayRecord; segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult }) {
-  const projected = projectLocationSegments(segments, 360, 300, 48);
-  const hasReconstruction = projected.length > 0;
-  const desktopOnly = isDesktopOnlyDay(day) && !hasReconstruction;
-  const hasNoLocationEvidence = !hasReconstruction && day.places.length === 0;
-  const assignmentBySegment = new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId]));
-  const placeIndexById = new Map(knownPlaceClustering.places.map((place, index) => [place.id, index]));
-  const reconstructedDistance = segments.filter((segment) => segment.kind === 'journey').reduce((total, segment) => total + segment.distanceMetres, 0);
-  const stopCount = new Set(segments.filter((segment) => segment.kind === 'stay').map((segment) => assignmentBySegment.get(segment.id) ?? segment.id)).size;
-  const origin = segmentOrigin(segments);
-  if (hasNoLocationEvidence) {
-    return (
-      <View style={styles.noLocationCard}>
-        <View style={styles.noLocationIcon}><Text style={styles.noLocationIconText}>D</Text></View>
-        <Text style={styles.noLocationEyebrow}>{desktopOnly ? 'DESKTOP DAY IS LIVE' : 'SOURCE NOT CONNECTED'}</Text>
-        <Text style={styles.noLocationTitle}>Location isn’t connected here.</Text>
-        <Text style={styles.noLocationBody}>{desktopOnly ? 'ATIRA can still reconstruct computer activity while the phone’s place and movement layers remain absent.' : 'This day has no location evidence. ATIRA will not draw a route or report zero travel without a connected phone collector.'}</Text>
-      </View>
-    );
-  }
-  return (
-    <View style={styles.mapCard}>
-      <Svg width="100%" height="100%" viewBox="0 0 360 300">
-        <Path d="M-20 42 C82 80 158 44 380 15" stroke="#EEF1EA" strokeWidth="17" fill="none" />
-        <Path d="M-15 206 C98 168 210 181 380 236" stroke="#EEF1EA" strokeWidth="15" fill="none" />
-        <Path d="M78 -20 C103 72 97 170 135 325" stroke="#EEF1EA" strokeWidth="13" fill="none" />
-        <Path d="M338 -10 C311 82 310 174 350 318" stroke="#E7ECE5" strokeWidth="8" fill="none" />
-        {hasReconstruction ? projected.filter((item) => item.segment.kind !== 'stay').map((item) => (
-          <Path
-            key={item.segment.id}
-            d={projectedPath(item.points)}
-            stroke={item.segment.kind === 'coverage_gap' ? colours.amber : colours.blue}
-            strokeWidth={item.segment.kind === 'coverage_gap' ? 7 : 6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray={item.segment.kind === 'coverage_gap' ? '8 7' : undefined}
-            fill="none"
-          />
-        )) : (
-          <>
-            <Path d={day.routePath} stroke={colours.blue} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-            {day.inferredRoutePath ? <Path d={day.inferredRoutePath} stroke={colours.amber} strokeWidth="7" strokeLinecap="round" strokeDasharray="8 7" fill="none" /> : null}
-          </>
-        )}
-        {hasReconstruction ? projected.filter((item) => item.segment.kind === 'stay' && item.center).map((item) => {
-          const placeId = assignmentBySegment.get(item.segment.id);
-          const colourIndex = placeId ? placeIndexById.get(placeId) ?? 0 : 0;
-          return <Circle key={item.segment.id} cx={item.center?.x} cy={item.center?.y} r="9" fill={clusterColours[colourIndex % clusterColours.length]} stroke={colours.white} strokeWidth="4" />;
-        }) : day.places.map((place) => (
-          <Circle key={place.id} cx={place.x} cy={place.y} r="9" fill={placeColour[place.kind]} stroke={colours.white} strokeWidth="4" />
-        ))}
-      </Svg>
-      <View style={styles.mapTopRow}>
-        <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? formatDistance(reconstructedDistance) : day.distance}</Text><Text style={styles.mapMetricLabel}>travelled</Text></View>
-        <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? stopCount : day.places.length - 1}</Text><Text style={styles.mapMetricLabel}>meaningful stops</Text></View>
-      </View>
-      <View style={styles.mapLegend}>
-        <View style={styles.legendItem}><View style={[styles.legendLine, { backgroundColor: colours.blue }]} /><Text style={styles.legendText}>{hasReconstruction ? 'Measured path' : 'Illustrative demo'}</Text></View>
-        {(hasReconstruction ? segments.some((segment) => segment.kind === 'coverage_gap') : day.inferredRoutePath) ? <View style={styles.legendItem}><View style={styles.legendDash} /><Text style={styles.legendText}>Coverage gap</Text></View> : null}
-      </View>
-      <View style={[styles.mapOrigin, origin === 'real' && styles.mapOriginReal]}><Text style={styles.mapOriginText}>{hasReconstruction ? `${origin.toUpperCase()} RECONSTRUCTION` : 'FIXTURE MAP'}</Text></View>
-    </View>
-  );
-}
-
 function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: DayRecord; segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult; onOpenEvent: (event: TimelineEvent) => void }) {
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const desktopUsages = day.desktopUsages ?? [];
   const applicationCount = desktopUsages.reduce(
     (total, usage) => total + groupApplicationsForDisplay(usage.applications).length,
@@ -128,9 +64,16 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
     .filter((id): id is string => id != null))]
     .map((id) => placeById.get(id))
     .filter((place): place is NonNullable<typeof place> => place != null);
+  useEffect(() => setSelectedSegmentId(null), [day.id]);
   return (
     <>
-      <RouteMap day={day} segments={segments} knownPlaceClustering={knownPlaceClustering} />
+      <InteractiveRouteMap
+        day={day}
+        segments={segments}
+        knownPlaceClustering={knownPlaceClustering}
+        selectedSegmentId={selectedSegmentId}
+        onSelectSegment={setSelectedSegmentId}
+      />
       {day.places.length > 0 || reconstructedPlaces.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.placeChips}>
         {reconstructedPlaces.length > 0 ? reconstructedPlaces.map((place) => (
           <View key={place.id} style={styles.placeChip}>
@@ -159,7 +102,14 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
         </View>
       ) : null}
 
-      {segments.length > 0 ? <LocationSegmentTimeline segments={segments} knownPlaceClustering={knownPlaceClustering} /> : null}
+      {segments.length > 0 ? (
+        <LocationSegmentTimeline
+          segments={segments}
+          knownPlaceClustering={knownPlaceClustering}
+          selectedSegmentId={selectedSegmentId}
+          onSelectSegment={setSelectedSegmentId}
+        />
+      ) : null}
 
       <View style={styles.daySummary}>
         <View style={styles.coverageBlock}><Text style={styles.coverageValue}>{day.coverage}%</Text><Text style={styles.coverageLabel}>{desktopOnly ? 'desktop coverage' : 'understood'}</Text></View>
@@ -213,7 +163,17 @@ function DeviceUsageSection({ usages }: { usages: DesktopUsageSummary[] }) {
   );
 }
 
-function LocationSegmentTimeline({ segments, knownPlaceClustering }: { segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult }) {
+function LocationSegmentTimeline({
+  segments,
+  knownPlaceClustering,
+  selectedSegmentId,
+  onSelectSegment,
+}: {
+  segments: LocationSegmentRecord[];
+  knownPlaceClustering: KnownPlaceClusteringResult;
+  selectedSegmentId: string | null;
+  onSelectSegment: (segmentId: string | null) => void;
+}) {
   const assignmentBySegment = new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId]));
   const placeById = new Map(knownPlaceClustering.places.map((place) => [place.id, place]));
   return (
@@ -224,23 +184,20 @@ function LocationSegmentTimeline({ segments, knownPlaceClustering }: { segments:
       </View>
       {segments.map((segment, index) => {
         const place = placeById.get(assignmentBySegment.get(segment.id) ?? '');
-        const title = segment.kind === 'stay'
-          ? place?.label ?? 'Unclustered stay'
-          : segment.kind === 'coverage_gap'
-            ? 'Missing coverage'
-            : `${travelModeLabel(segment.mode)} journey`;
-        const detail = segment.kind === 'stay'
-          ? `${formatMinutes(segment.durationMinutes)} in one area · ${segment.sampleCount} samples`
-          : segment.kind === 'coverage_gap'
-            ? `${formatMinutes(segment.durationMinutes)} without measurements · straight line is not counted as travel`
-            : `${formatDistance(segment.distanceMetres)} · ${formatMinutes(segment.durationMinutes)} · ${segment.sampleCount} samples`;
+        const selected = segment.id === selectedSegmentId;
         return (
-          <View key={segment.id} style={[styles.locationSegmentRow, index === segments.length - 1 && styles.locationSegmentRowLast]}>
+          <Pressable
+            key={segment.id}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            onPress={() => onSelectSegment(selected ? null : segment.id)}
+            style={[styles.locationSegmentRow, selected && styles.locationSegmentRowSelected, index === segments.length - 1 && styles.locationSegmentRowLast]}
+          >
             <View style={[styles.locationSegmentMark, segment.kind === 'coverage_gap' && styles.locationSegmentMarkGap]} />
             <View style={styles.locationSegmentTime}><Text style={styles.locationSegmentTimeText}>{formatClock(segment.startedAt)}</Text><Text style={styles.locationSegmentTimeEnd}>{formatClock(segment.endedAt)}</Text></View>
-            <View style={styles.locationSegmentCopy}><Text style={styles.locationSegmentTitle}>{title}</Text><Text style={styles.locationSegmentDetail}>{detail}</Text></View>
+            <View style={styles.locationSegmentCopy}><Text style={styles.locationSegmentTitle}>{locationSegmentTitle(segment, place?.label)}</Text><Text style={styles.locationSegmentDetail}>{locationSegmentDetail(segment)}</Text></View>
             <Text style={styles.locationSegmentConfidence}>{Math.round(segment.confidence * 100)}%</Text>
-          </View>
+          </Pressable>
         );
       })}
     </View>
@@ -439,29 +396,6 @@ function labelCategory(category: DigitalActivityCategory) {
   return category.replace('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function formatDistance(distanceMetres: number) {
-  return distanceMetres >= 1000 ? `${(distanceMetres / 1000).toFixed(1)} km` : `${Math.round(distanceMetres)} m`;
-}
-
-function formatMinutes(minutes: number) {
-  if (minutes < 60) return `${Math.round(minutes)}m`;
-  const hours = Math.floor(minutes / 60);
-  const remaining = Math.round(minutes % 60);
-  return `${hours}h${remaining > 0 ? ` ${remaining}m` : ''}`;
-}
-
-function formatClock(timestamp: string) {
-  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-function travelModeLabel(mode: LocationSegmentRecord['mode']) {
-  if (mode === 'fast_transit') return 'Fast transit';
-  if (mode === 'road') return 'Road';
-  if (mode === 'cycling') return 'Cycling';
-  if (mode === 'walking') return 'Walking';
-  return 'Unclassified';
-}
-
 const styles = StyleSheet.create({
   content: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 112 },
   devicePicker: { gap: 8, paddingTop: 20, paddingBottom: 2 },
@@ -485,25 +419,6 @@ const styles = StyleSheet.create({
   dateWeekday: { color: colours.inkSoft, fontSize: 9, fontWeight: '800' },
   dateNumber: { color: colours.ink, fontSize: 16, fontWeight: '900', marginTop: 4 },
   dateTextSelected: { color: colours.white },
-  mapCard: { height: 300, backgroundColor: '#DCE4DC', borderRadius: radius.large, overflow: 'hidden', position: 'relative', ...shadow },
-  noLocationCard: { minHeight: 180, backgroundColor: colours.blueSoft, borderRadius: radius.large, padding: 20, justifyContent: 'center', borderWidth: 1, borderColor: '#CFD9E9', ...shadow },
-  noLocationIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: colours.blue, alignItems: 'center', justifyContent: 'center' },
-  noLocationIconText: { color: colours.white, fontSize: 15, fontWeight: '900' },
-  noLocationEyebrow: { color: colours.blue, fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginTop: 14 },
-  noLocationTitle: { color: colours.ink, fontSize: 19, fontWeight: '900', marginTop: 5 },
-  noLocationBody: { color: colours.inkSoft, fontSize: 10, lineHeight: 16, marginTop: 6, maxWidth: 330 },
-  mapTopRow: { position: 'absolute', top: 13, left: 13, right: 13, flexDirection: 'row', justifyContent: 'space-between' },
-  mapMetric: { backgroundColor: 'rgba(255,253,248,0.92)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 },
-  mapMetricValue: { color: colours.ink, fontSize: 12, fontWeight: '900' },
-  mapMetricLabel: { color: colours.inkSoft, fontSize: 8, marginTop: 2 },
-  mapLegend: { position: 'absolute', left: 12, bottom: 12, flexDirection: 'row', gap: 7 },
-  mapOrigin: { position: 'absolute', right: 12, bottom: 12, backgroundColor: colours.amberSoft, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 7 },
-  mapOriginReal: { backgroundColor: colours.mossSoft },
-  mapOriginText: { color: colours.ink, fontSize: 7, fontWeight: '900', letterSpacing: 0.4 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(23,34,31,0.9)', paddingHorizontal: 9, paddingVertical: 7, borderRadius: radius.pill },
-  legendLine: { width: 15, height: 3, borderRadius: 2, marginRight: 5 },
-  legendDash: { width: 15, height: 3, borderTopWidth: 2, borderStyle: 'dashed', borderColor: colours.amber, marginRight: 5 },
-  legendText: { color: colours.white, fontSize: 8, fontWeight: '800' },
   placeChips: { gap: 7, paddingVertical: 10 },
   placeChip: { minWidth: 120, backgroundColor: colours.surface, borderRadius: 14, padding: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colours.line },
   placeDot: { width: 9, height: 9, borderRadius: 5, marginRight: 8 },
@@ -519,6 +434,7 @@ const styles = StyleSheet.create({
   locationTimelineTitle: { color: colours.ink, fontSize: 12, fontWeight: '900' },
   locationTimelineCount: { color: colours.moss, fontSize: 7, fontWeight: '900', letterSpacing: 0.6 },
   locationSegmentRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#EEEAE3' },
+  locationSegmentRowSelected: { backgroundColor: colours.blueSoft, marginHorizontal: -8, paddingHorizontal: 8, borderRadius: 12 },
   locationSegmentRowLast: { borderBottomWidth: 0 },
   locationSegmentMark: { width: 7, height: 24, borderRadius: 4, backgroundColor: colours.blue, marginRight: 9 },
   locationSegmentMarkGap: { backgroundColor: colours.amber },

@@ -15,6 +15,7 @@ import {
   TimelineRepository,
 } from './contracts';
 import { getOrCreateDatabaseKey } from './databaseKey.native';
+import { retryTransientDatabaseOperation } from './databaseReliability';
 
 interface DayRow {
   id: string;
@@ -114,19 +115,25 @@ interface ActivityRuleRow {
 }
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+const DATABASE_BUSY_TIMEOUT_MS = 5_000;
 
 function getDatabase() {
-  databasePromise ??= (async () => {
+  if (databasePromise) return databasePromise;
+  const pending = (async () => {
     const database = await SQLite.openDatabaseAsync('atira.db');
     const key = await getOrCreateDatabaseKey();
-    await database.execAsync(`PRAGMA key = '${key}'`);
+    await database.execAsync(`PRAGMA key = '${key}'; PRAGMA busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys = ON;`);
     return database;
   })();
-  return databasePromise;
+  databasePromise = pending;
+  void pending.catch(() => {
+    if (databasePromise === pending) databasePromise = null;
+  });
+  return pending;
 }
 
 async function migrate(database: SQLite.SQLiteDatabase) {
-  await database.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+  await database.execAsync(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS};`);
   const versionRow = await database.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   let currentVersion = versionRow?.user_version ?? 0;
   if (currentVersion >= DATABASE_SCHEMA_VERSION) return;
@@ -356,10 +363,12 @@ async function withExclusiveKeyedTransaction(
   task: (transaction: SQLite.SQLiteDatabase) => Promise<void>,
 ) {
   const key = await getOrCreateDatabaseKey();
-  await database.withExclusiveTransactionAsync(async (transaction) => {
-    await transaction.execAsync(`PRAGMA key = '${key}'`);
-    await task(transaction);
-  });
+  await retryTransientDatabaseOperation(
+    () => database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync(`PRAGMA key = '${key}'; PRAGMA busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys = ON;`);
+      await task(transaction);
+    }),
+  );
 }
 
 async function insertEvent(database: SQLite.SQLiteDatabase, dayId: string, event: TimelineEvent, sortIndex: number) {
@@ -447,9 +456,11 @@ async function seedIfEmpty(database: SQLite.SQLiteDatabase, seedDays: DayRecord[
 
 class NativeTimelineRepository implements TimelineRepository {
   async initialize(seedDays: DayRecord[]) {
-    const database = await getDatabase();
-    await migrate(database);
-    await seedIfEmpty(database, seedDays);
+    await retryTransientDatabaseOperation(async () => {
+      const database = await getDatabase();
+      await migrate(database);
+      await seedIfEmpty(database, seedDays);
+    });
   }
 
   async listDays(): Promise<DayRecord[]> {

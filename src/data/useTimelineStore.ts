@@ -6,9 +6,11 @@ import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstructio
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
 import { assessCollectorHealth } from '../collectors/collectorHealth';
 import { BrowserIntegrationStatus, connectOrSyncHuaweiHealth, createBrowserPairingCode, deleteDesktopCollectorHistory, inspectBrowserIntegration, inspectDesktopCollectionControl, inspectDesktopCollector, inspectHuaweiHealthConnector, setDesktopCollectionPaused, syncDesktopObservations, syncHuaweiHealthObservations, unpairBrowserIntegration } from '../collectors/desktopCollectorClient';
+import { locationDayResultToRecord } from '../reconstruction/locationDayPresentation';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
 import { desktopDayResultsToRecord, reconstructDesktopActivity, withoutDesktopDerivedData } from '../reconstruction/desktopActivityEngine';
 import { CollectorStatus, DeviceRecord, EventCorrection, LocationSegmentRecord, RawObservation, RepositoryDiagnostics, TimelineRepository } from './contracts';
+import { databaseStartupMessage } from './databaseReliability';
 import { getTimelineRepository } from './timelineRepository';
 
 interface UpdateEventInput {
@@ -89,7 +91,7 @@ export function useTimelineStore() {
       setBrowserIntegration(await inspectBrowserIntegration());
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'ATIRA could not open its local data store.');
+      setError(databaseStartupMessage(cause));
     } finally {
       setLoading(false);
     }
@@ -326,7 +328,11 @@ export function useTimelineStore() {
 }
 
 async function reconstructStoredLocationDays(repository: TimelineRepository) {
-  const observations = await repository.listObservations({ source: 'location' });
+  const [observations, existingDays] = await Promise.all([
+    repository.listObservations({ source: 'location' }),
+    repository.listDays(),
+  ]);
+  const existingById = new Map(existingDays.map((day) => [day.id, day]));
   const byDay = new Map<string, typeof observations>();
   for (const observation of observations) {
     const dayId = observation.startedAt.slice(0, 10);
@@ -338,6 +344,9 @@ async function reconstructStoredLocationDays(repository: TimelineRepository) {
   for (const [dayId, dayObservations] of byDay) {
     const result = reconstructLocationDay(dayId, dayObservations);
     await repository.replaceLocationSegments(dayId, result.segments);
+    const record = locationDayResultToRecord(result, existingById.get(dayId));
+    await repository.upsertDay(record);
+    existingById.set(dayId, record);
     results.push(result);
   }
   return results;
