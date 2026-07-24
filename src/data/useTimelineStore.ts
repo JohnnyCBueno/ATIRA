@@ -29,6 +29,7 @@ import { LocationReconstructionResult, reconstructLocationDay } from '../reconst
 import { desktopDayResultsToRecord, reconstructDesktopActivity, withoutDesktopDerivedData } from '../reconstruction/desktopActivityEngine';
 import { CollectorStatus, DeviceRecord, EventCorrection, LocationSegmentRecord, RawObservation, RepositoryDiagnostics, TimelineRepository } from './contracts';
 import { databaseStartupMessage } from './databaseReliability';
+import { ensureCurrentDay } from './currentDay';
 import { getTimelineRepository } from './timelineRepository';
 
 interface UpdateEventInput {
@@ -59,6 +60,7 @@ export function useTimelineStore() {
   const collectorHealth = useMemo(() => collectorStatuses.map((status) => assessCollectorHealth(status)), [collectorStatuses]);
 
   const refresh = useCallback(async () => {
+    await ensureCurrentDay(repository);
     const [storedDays, statuses, repositoryDiagnostics, storedSegments, storedObservations, storedDevices, storedRules] = await Promise.all([
       repository.listDays(),
       repository.listCollectorStatuses(),
@@ -104,7 +106,7 @@ export function useTimelineStore() {
         }
       }
       await reconstructStoredDesktopDays(repository);
-      if ((await repository.listDays()).length === 0) await repository.upsertDay(emptyDayRecord(new Date()));
+      await ensureCurrentDay(repository);
       await repository.upsertCollectorStatus(await inspectHuaweiHealthConnector());
       setDesktopControl(await inspectDesktopCollectionControl());
       setBrowserIntegration(await inspectBrowserIntegration());
@@ -434,27 +436,6 @@ async function reconstructStoredDesktopDays(repository: TimelineRepository) {
       : desktopRecord;
     await repository.upsertDay(record);
   }
-}
-
-function emptyDayRecord(date: Date): DayRecord {
-  const id = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  return {
-    id,
-    weekday: date.toLocaleDateString([], { weekday: 'short' }),
-    dayNumber: String(date.getDate()),
-    month: date.toLocaleDateString([], { month: 'long' }),
-    relativeLabel: 'Today',
-    coverage: 0,
-    understood: '0m',
-    work: '0m',
-    movement: '—',
-    learning: '0m',
-    distance: '—',
-    routePath: '',
-    places: [],
-    events: [],
-    desktopUsages: [],
-  };
 }
 
 async function clearDesktopDerivedDays(repository: TimelineRepository, dayIds: Set<string>) {
