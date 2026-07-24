@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DesktopUsageApplication, DesktopUsageSummary, DigitalActivityCategory } from '../domain/types';
 import { colours, radius } from '../theme';
-import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
+import { buildDisplayTwoHourBuckets, groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
 
 const categoryMeta: Record<DigitalActivityCategory, { label: string; colour: string; soft: string }> = {
   creation: { label: 'Creation', colour: colours.moss, soft: colours.mossSoft },
@@ -18,17 +18,11 @@ interface Props {
   usage: DesktopUsageSummary;
 }
 
-interface TwoHourBucket {
-  startHour: number;
-  totalSeconds: number;
-  categories: { category: DigitalActivityCategory; durationSeconds: number }[];
-}
-
 export function DesktopUsagePanel({ usage }: Props) {
   const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
   const displayApplications = useMemo(() => groupApplicationsForDisplay(usage.applications), [usage.applications]);
   const visibleApplications = useMemo(() => displayApplications.map((item) => item.application), [displayApplications]);
-  const buckets = useMemo(() => twoHourBuckets(visibleApplications), [visibleApplications]);
+  const buckets = useMemo(() => buildDisplayTwoHourBuckets(visibleApplications), [visibleApplications]);
   const maxBucketSeconds = Math.max(1, ...buckets.map((bucket) => bucket.totalSeconds));
   const categoryTotals = useMemo(() => aggregateCategories(visibleApplications), [visibleApplications]);
   const maximumApplicationSeconds = Math.max(1, ...displayApplications.map((item) => item.application.durationSeconds));
@@ -178,33 +172,6 @@ function ApplicationSessions({ application }: { application: DesktopUsageApplica
       ))}
     </View>
   );
-}
-
-function twoHourBuckets(applications: DesktopUsageApplication[]): TwoHourBucket[] {
-  return Array.from({ length: 12 }, (_, index) => {
-    const startHour = index * 2;
-    const categoryMap = new Map<DigitalActivityCategory, number>();
-    let totalSeconds = 0;
-    const bucketStart = new Date();
-    bucketStart.setHours(startHour, 0, 0, 0);
-    const bucketEnd = new Date(bucketStart);
-    bucketEnd.setHours(startHour + 2);
-    for (const application of applications) {
-      for (const session of application.sessions) {
-        const start = Math.max(bucketStart.getTime(), Date.parse(session.startedAt));
-        const end = Math.min(bucketEnd.getTime(), Date.parse(session.endedAt));
-        const seconds = Math.max(0, Math.round((end - start) / 1_000));
-        if (seconds === 0) continue;
-        totalSeconds += seconds;
-        categoryMap.set(application.category, (categoryMap.get(application.category) ?? 0) + seconds);
-      }
-    }
-    return {
-      startHour,
-      totalSeconds,
-      categories: [...categoryMap.entries()].map(([category, durationSeconds]) => ({ category, durationSeconds })),
-    };
-  });
 }
 
 function aggregateCategories(applications: DesktopUsageApplication[]) {
