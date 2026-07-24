@@ -47,6 +47,16 @@ describe('desktop activity reconstruction', () => {
     expect(result.usage.totalSeconds).toBe(600);
   });
 
+  it('keeps an implausible overnight foreground run out of the meaningful audit', () => {
+    const result = reconstructDesktopActivity([
+      observation('overnight-explorer', 'explorer', '2026-07-23T22:24:12.365Z', '2026-07-24T08:58:54.009Z'),
+      observation('morning-chat', 'ChatGPT', '2026-07-24T09:00:00.000Z', '2026-07-24T09:10:00.000Z'),
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].usage.applications).toHaveLength(1);
+    expect(result[0].usage.applications[0]).toMatchObject({ applicationName: 'ChatGPT', durationSeconds: 600 });
+  });
+
   it('suppresses sub-minute switches and ATIRA implementation processes', () => {
     const result = reconstructDesktopActivity([
       observation('tiny', 'ChatGPT', '2026-07-21T12:00:00.000Z', '2026-07-21T12:00:40.000Z'),

@@ -79,6 +79,8 @@ It does not assert that the user force-quit the app unless the platform later pr
 
 Missing live evidence is not converted into observed evidence. The reconstruction engine may use desktop, device activity, health, place history, and other context to form a clearly labelled inferred interval, but it retains the original coverage gap and source lineage.
 
+An uninterrupted active foreground interval lasting six or more hours across a local midnight is treated as *unverified continuous foreground* when only desktop evidence exists. It remains immutable raw evidence, but is excluded from descriptive usage totals, timeline reconstruction, and pattern inputs until corroborated by an independent source. This prevents an unreliable idle signal or synthetic input from becoming a false account of overnight work.
+
 ## Consequences
 
 - ATIRA must be launched initially to obtain authorization and activate collectors.

@@ -24,6 +24,13 @@ export interface NormalizedDigitalSession {
   unclassifiedEngagementSeconds: number;
 }
 
+// A single foreground/"recent input" signal is not enough to establish that a
+// person was meaningfully present through an entire night. Windows can receive
+// synthetic or peripheral input that continually resets its idle timer. The
+// raw observation remains immutable, but this class of session stays out of
+// descriptive audits and pattern inputs until another source can corroborate it.
+const UNVERIFIED_OVERNIGHT_FOREGROUND_SECONDS = 6 * 60 * 60;
+
 interface Candidate extends NormalizedDigitalSession {
   browserContext: boolean;
   nativeApplicationId: string;
@@ -41,6 +48,8 @@ export function normalizeDigitalSessions(
     const started = Date.parse(observation.startedAt);
     const ended = Date.parse(observation.endedAt ?? observation.capturedAt);
     if (!Number.isFinite(started) || !Number.isFinite(ended) || ended <= started) return [];
+    const durationSeconds = Math.round((ended - started) / 1000);
+    if (isUnverifiedOvernightForeground(observation, started, ended, durationSeconds)) return [];
     const deviceId = observation.deviceId ?? `legacy-${observation.source}-device`;
     const domain = observation.kind === 'browser_foreground' && typeof observation.payload.domain === 'string' ? observation.payload.domain : '';
     const application = typeof observation.payload.application === 'string' ? observation.payload.application : '';
@@ -49,7 +58,6 @@ export function normalizeDigitalSessions(
       ? classifyDigitalDomain(domain, deviceId, rules)
       : classifyDigitalApplication(application, deviceId, rules);
     if (classification.excluded) return [];
-    const durationSeconds = Math.round((ended - started) / 1000);
     const interactiveSeconds = numericSeconds(observation.payload.interactiveSeconds, durationSeconds);
     const passiveSeconds = numericSeconds(observation.payload.passiveSeconds, durationSeconds - interactiveSeconds);
     return [{
@@ -98,6 +106,18 @@ export function normalizeDigitalSessions(
         durationSeconds: Math.round((end - start) / 1000),
       }));
   }).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+}
+
+export function isUnverifiedOvernightForeground(
+  observation: Pick<RawObservation, 'kind' | 'payload'>,
+  startedAt: number,
+  endedAt: number,
+  durationSeconds = Math.round((endedAt - startedAt) / 1_000),
+) {
+  if (!['desktop_foreground', 'app_foreground'].includes(observation.kind)) return false;
+  if (String(observation.payload.activityState ?? 'active') !== 'active') return false;
+  if (durationSeconds < UNVERIFIED_OVERNIGHT_FOREGROUND_SECONDS) return false;
+  return localDayId(startedAt) !== localDayId(endedAt);
 }
 
 function numericSeconds(value: unknown, maximum: number) {
@@ -163,4 +183,9 @@ function subtractIntervals(start: number, end: number, intervals: readonly (read
     });
   }
   return fragments;
+}
+
+function localDayId(timestamp: number) {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }

@@ -38,6 +38,14 @@ describe('buildDigitalAudit', () => {
     expect(audit.observedDayCount).toBe(0);
   });
 
+  it('does not turn an uninterrupted overnight foreground session into audit time', () => {
+    const audit = buildDigitalAudit([
+      observation('overnight', 'computer', '2026-07-20T22:00:00', 'explorer', 10 * 60 * 60),
+    ], devices, [], '7d', new Date(2026, 6, 21, 12));
+    expect(audit.totalSeconds).toBe(0);
+    expect(audit.observedDayCount).toBe(0);
+  });
+
   it('distinguishes a missing day from an observed day with activity', () => {
     const audit = buildDigitalAudit([
       observation('one', 'computer', '2026-07-21T09:00:00', 'Code', 600),
