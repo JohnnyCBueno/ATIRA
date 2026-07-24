@@ -7,7 +7,7 @@ import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocati
 import { assessCollectorHealth } from '../collectors/collectorHealth';
 import { BrowserIntegrationStatus, connectOrSyncHuaweiHealth, createBrowserPairingCode, deleteDesktopCollectorHistory, inspectBrowserIntegration, inspectDesktopCollectionControl, inspectDesktopCollector, inspectHuaweiHealthConnector, setDesktopCollectionPaused, syncDesktopObservations, syncHuaweiHealthObservations, unpairBrowserIntegration } from '../collectors/desktopCollectorClient';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
-import { desktopDayResultsToRecord, reconstructDesktopActivity } from '../reconstruction/desktopActivityEngine';
+import { desktopDayResultsToRecord, reconstructDesktopActivity, withoutDesktopDerivedData } from '../reconstruction/desktopActivityEngine';
 import { CollectorStatus, DeviceRecord, EventCorrection, LocationSegmentRecord, RawObservation, RepositoryDiagnostics, TimelineRepository } from './contracts';
 import { getTimelineRepository } from './timelineRepository';
 
@@ -352,13 +352,19 @@ async function reconstructStoredDesktopDays(repository: TimelineRepository) {
   ]);
   const existingById = new Map(existingDays.map((day) => [day.id, day]));
   const resultsByDay = new Map<string, ReturnType<typeof reconstructDesktopActivity>>();
+  const observedDesktopDayIds = new Set(observations.map((observation) => observation.startedAt.slice(0, 10)));
   for (const result of reconstructDesktopActivity(observations, devices, rules)) {
     const dayResults = resultsByDay.get(result.dayId) ?? [];
     dayResults.push(result);
     resultsByDay.set(result.dayId, dayResults);
   }
-  for (const [dayId, results] of resultsByDay) {
+  for (const dayId of observedDesktopDayIds) {
     const existing = existingById.get(dayId);
+    const results = resultsByDay.get(dayId) ?? [];
+    if (results.length === 0) {
+      if (existing) await repository.upsertDay(withoutDesktopDerivedData(existing));
+      continue;
+    }
     const desktopRecord = desktopDayResultsToRecord(results, existing);
     const nonDesktopEvents = (existing?.events ?? []).filter((event) => !event.evidence.some((item) => item.source === 'desktop'));
     const record = existing && nonDesktopEvents.length > 0
@@ -401,16 +407,6 @@ async function clearDesktopDerivedDays(repository: TimelineRepository, dayIds: S
   if (dayIds.size === 0) return;
   const days = await repository.listDays();
   for (const day of days.filter((item) => dayIds.has(item.id))) {
-    const events = day.events.filter((event) => !event.evidence.some((evidence) => evidence.source === 'desktop'));
-    const hasOtherEvidence = events.length > 0 || day.places.length > 0;
-    await repository.upsertDay({
-      ...day,
-      coverage: hasOtherEvidence ? day.coverage : 0,
-      understood: hasOtherEvidence ? day.understood : '0m',
-      work: hasOtherEvidence ? day.work : '0m',
-      learning: hasOtherEvidence ? day.learning : '0m',
-      desktopUsages: [],
-      events,
-    });
+    await repository.upsertDay(withoutDesktopDerivedData(day));
   }
 }

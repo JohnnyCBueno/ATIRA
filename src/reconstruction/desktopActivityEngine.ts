@@ -139,6 +139,21 @@ export function desktopDayResultsToRecord(results: DesktopDayReconstruction[], e
   };
 }
 
+/** Removes only derived desktop material while preserving evidence from other sources. */
+export function withoutDesktopDerivedData(day: DayRecord): DayRecord {
+  const events = day.events.filter((event) => !event.evidence.some((evidence) => evidence.source === 'desktop'));
+  const hasOtherEvidence = events.length > 0 || day.places.length > 0;
+  return {
+    ...day,
+    coverage: hasOtherEvidence ? day.coverage : 0,
+    understood: hasOtherEvidence ? day.understood : '0m',
+    work: hasOtherEvidence ? day.work : '0m',
+    learning: hasOtherEvidence ? day.learning : '0m',
+    desktopUsages: [],
+    events,
+  };
+}
+
 function unionDuration(blocks: DesktopActivityBlock[]) {
   const intervals = blocks
     .map((block) => [Date.parse(block.startedAt), Date.parse(block.endedAt)] as const)

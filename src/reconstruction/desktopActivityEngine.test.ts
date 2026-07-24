@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RawObservation } from '../data/contracts';
-import { desktopDayResultsToRecord, desktopDayToRecord, reconstructDesktopActivity } from './desktopActivityEngine';
+import { desktopDayResultsToRecord, desktopDayToRecord, reconstructDesktopActivity, withoutDesktopDerivedData } from './desktopActivityEngine';
 
 const observation = (id: string, application: string | null, startedAt: string, endedAt: string, activityState = 'active', deviceId = 'device-windows'): RawObservation => ({
   id,
@@ -55,6 +55,14 @@ describe('desktop activity reconstruction', () => {
     expect(result).toHaveLength(1);
     expect(result[0].usage.applications).toHaveLength(1);
     expect(result[0].usage.applications[0]).toMatchObject({ applicationName: 'ChatGPT', durationSeconds: 600 });
+  });
+
+  it('clears a stale desktop-derived record when no usable desktop sessions remain', () => {
+    const existing = desktopDayToRecord(reconstructDesktopActivity([
+      observation('old-explorer', 'explorer', '2026-07-23T08:00:00.000Z', '2026-07-23T18:00:00.000Z'),
+    ])[0], undefined, new Date('2026-07-24T10:00:00.000Z'));
+    const cleared = withoutDesktopDerivedData(existing);
+    expect(cleared).toMatchObject({ coverage: 0, understood: '0m', work: '0m', learning: '0m', desktopUsages: [], events: [] });
   });
 
   it('suppresses sub-minute switches and ATIRA implementation processes', () => {
