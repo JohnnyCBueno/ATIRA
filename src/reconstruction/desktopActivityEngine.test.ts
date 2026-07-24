@@ -49,8 +49,8 @@ describe('desktop activity reconstruction', () => {
 
   it('keeps an implausible overnight foreground run out of the meaningful audit', () => {
     const result = reconstructDesktopActivity([
-      observation('overnight-explorer', 'explorer', '2026-07-23T22:24:12.365Z', '2026-07-24T08:58:54.009Z'),
-      observation('morning-chat', 'ChatGPT', '2026-07-24T09:00:00.000Z', '2026-07-24T09:10:00.000Z'),
+      observation('overnight-explorer', 'explorer', '2026-07-23T22:24:12.365', '2026-07-24T08:58:54.009'),
+      observation('morning-chat', 'ChatGPT', '2026-07-24T09:00:00.000', '2026-07-24T09:10:00.000'),
     ]);
     expect(result).toHaveLength(1);
     expect(result[0].usage.applications).toHaveLength(1);
