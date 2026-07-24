@@ -26,19 +26,21 @@ interface TwoHourBucket {
 
 export function DesktopUsagePanel({ usage }: Props) {
   const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
-  const buckets = useMemo(() => twoHourBuckets(usage), [usage]);
   const displayApplications = useMemo(() => groupApplicationsForDisplay(usage.applications), [usage.applications]);
+  const visibleApplications = useMemo(() => displayApplications.map((item) => item.application), [displayApplications]);
+  const buckets = useMemo(() => twoHourBuckets(visibleApplications), [visibleApplications]);
   const maxBucketSeconds = Math.max(1, ...buckets.map((bucket) => bucket.totalSeconds));
-  const categoryTotals = useMemo(() => aggregateCategories(usage), [usage]);
+  const categoryTotals = useMemo(() => aggregateCategories(visibleApplications), [visibleApplications]);
   const maximumApplicationSeconds = Math.max(1, ...displayApplications.map((item) => item.application.durationSeconds));
+  const visibleTotalSeconds = visibleApplications.reduce((total, application) => total + application.durationSeconds, 0);
 
   return (
     <View>
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.eyebrow}>DIGITAL ACTIVITY · {usage.platform.toUpperCase()}</Text>
-          <Text style={styles.total}>{formatDuration(usage.totalSeconds)}</Text>
-          <Text style={styles.totalLabel}>observed foreground use</Text>
+          <Text style={styles.total}>{formatDuration(visibleTotalSeconds)}</Text>
+          <Text style={styles.totalLabel}>explained foreground use</Text>
         </View>
         <View style={styles.deviceIdentity}>
           <Text style={styles.deviceIdentityKicker}>DEVICE</Text>
@@ -85,7 +87,7 @@ export function DesktopUsagePanel({ usage }: Props) {
         <Text style={styles.listHint}>SELECT FOR TIMES</Text>
       </View>
       <View style={styles.appList}>
-        {displayApplications.map(({ application, browserSites, unclassifiedBrowser }, index) => {
+        {displayApplications.map(({ application, browserSites }, index) => {
           const expanded = application.applicationId === expandedApplicationId;
           return (
             <View key={application.applicationId}>
@@ -98,7 +100,7 @@ export function DesktopUsagePanel({ usage }: Props) {
                 onPress={() => setExpandedApplicationId(expanded ? null : application.applicationId)}
               />
               {expanded ? browserSites.length > 0
-                ? <BrowserBreakdown browserName={application.applicationName} sites={browserSites} unclassified={unclassifiedBrowser} />
+                ? <BrowserBreakdown browserName={application.applicationName} sites={browserSites} />
                 : <ApplicationSessions application={application} /> : null}
             </View>
           );
@@ -137,14 +139,9 @@ function ApplicationRow({ application, maximumSeconds, expanded, isLast, detail,
   );
 }
 
-function BrowserBreakdown({ browserName, sites, unclassified }: { browserName: string; sites: DesktopUsageApplication[]; unclassified?: DesktopUsageApplication }) {
+function BrowserBreakdown({ browserName, sites }: { browserName: string; sites: DesktopUsageApplication[] }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const items = [
-    ...sites,
-    ...(unclassified && unclassified.durationSeconds > 0
-      ? [{ ...unclassified, applicationId: `${unclassified.applicationId}:unclassified`, applicationName: `Other ${browserName} time` }]
-      : []),
-  ].sort((a, b) => b.durationSeconds - a.durationSeconds);
+  const items = [...sites].sort((a, b) => b.durationSeconds - a.durationSeconds);
   return (
     <View style={styles.browserBreakdown}>
       <Text style={styles.sessionsHeading}>WHERE YOUR {browserName.toUpperCase()} TIME WENT</Text>
@@ -183,14 +180,24 @@ function ApplicationSessions({ application }: { application: DesktopUsageApplica
   );
 }
 
-function twoHourBuckets(usage: DesktopUsageSummary): TwoHourBucket[] {
+function twoHourBuckets(applications: DesktopUsageApplication[]): TwoHourBucket[] {
   return Array.from({ length: 12 }, (_, index) => {
     const startHour = index * 2;
     const categoryMap = new Map<DigitalActivityCategory, number>();
     let totalSeconds = 0;
-    for (const hour of usage.hours.slice(startHour, startHour + 2)) {
-      totalSeconds += hour.totalSeconds;
-      for (const item of hour.categories) categoryMap.set(item.category, (categoryMap.get(item.category) ?? 0) + item.durationSeconds);
+    const bucketStart = new Date();
+    bucketStart.setHours(startHour, 0, 0, 0);
+    const bucketEnd = new Date(bucketStart);
+    bucketEnd.setHours(startHour + 2);
+    for (const application of applications) {
+      for (const session of application.sessions) {
+        const start = Math.max(bucketStart.getTime(), Date.parse(session.startedAt));
+        const end = Math.min(bucketEnd.getTime(), Date.parse(session.endedAt));
+        const seconds = Math.max(0, Math.round((end - start) / 1_000));
+        if (seconds === 0) continue;
+        totalSeconds += seconds;
+        categoryMap.set(application.category, (categoryMap.get(application.category) ?? 0) + seconds);
+      }
     }
     return {
       startHour,
@@ -200,9 +207,9 @@ function twoHourBuckets(usage: DesktopUsageSummary): TwoHourBucket[] {
   });
 }
 
-function aggregateCategories(usage: DesktopUsageSummary) {
+function aggregateCategories(applications: DesktopUsageApplication[]) {
   const totals = new Map<DigitalActivityCategory, number>();
-  for (const application of usage.applications) totals.set(application.category, (totals.get(application.category) ?? 0) + application.durationSeconds);
+  for (const application of applications) totals.set(application.category, (totals.get(application.category) ?? 0) + application.durationSeconds);
   return [...totals.entries()]
     .map(([category, durationSeconds]) => ({ category, durationSeconds }))
     .sort((a, b) => b.durationSeconds - a.durationSeconds);

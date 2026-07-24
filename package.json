@@ -1,7 +1,7 @@
 {
   "name": "atira",
   "productName": "ATIRA",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A private, passive life timeline and personal analytics companion.",
   "author": "ATIRA",
   "main": "index.ts",

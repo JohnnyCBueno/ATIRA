@@ -3,7 +3,6 @@ import { DesktopUsageApplication } from '../domain/types';
 export interface DisplayApplication {
   application: DesktopUsageApplication;
   browserSites: DesktopUsageApplication[];
-  unclassifiedBrowser?: DesktopUsageApplication;
 }
 
 export function groupApplicationsForDisplay(applications: DesktopUsageApplication[]): DisplayApplication[] {
@@ -31,11 +30,12 @@ export function groupApplicationsForDisplay(applications: DesktopUsageApplicatio
         purpose: 'unknown',
         classificationConfidence: native?.classificationConfidence ?? 0.35,
         classificationProvenance: native?.classificationProvenance ?? 'unclassified',
-        durationSeconds: (native?.durationSeconds ?? 0) + sites.reduce((total, site) => total + site.durationSeconds, 0),
-        sessions: [...(native?.sessions ?? []), ...sites.flatMap((site) => site.sessions)].sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
+        // Native browser foreground without an active-domain record remains
+        // private coverage evidence. It is not shown as meaningful usage.
+        durationSeconds: sites.reduce((total, site) => total + site.durationSeconds, 0),
+        sessions: sites.flatMap((site) => site.sessions).sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
       },
       browserSites: sites.sort((a, b) => b.durationSeconds - a.durationSeconds),
-      unclassifiedBrowser: native,
     };
   });
   return [
