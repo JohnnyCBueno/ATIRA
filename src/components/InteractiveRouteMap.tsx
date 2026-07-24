@@ -171,15 +171,15 @@ export function InteractiveRouteMap({
             />
           );
         }) : null}
-        <View style={styles.mapTopRow} pointerEvents="none">
+        <View style={styles.mapTopRow}>
           <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? formatDistance(reconstructedDistance) : day.distance}</Text><Text style={styles.mapMetricLabel}>travelled</Text></View>
           <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? stopCount : Math.max(0, day.places.length - 1)}</Text><Text style={styles.mapMetricLabel}>meaningful stops</Text></View>
         </View>
-        <View style={styles.mapLegend} pointerEvents="none">
+        <View style={styles.mapLegend}>
           <View style={styles.legendItem}><View style={[styles.legendLine, { backgroundColor: colours.blue }]} /><Text style={styles.legendText}>{hasReconstruction ? 'Measured path' : 'Illustrative demo'}</Text></View>
           {(hasReconstruction ? segments.some((segment) => segment.kind === 'coverage_gap') : day.inferredRoutePath) ? <View style={styles.legendItem}><View style={styles.legendDash} /><Text style={styles.legendText}>Coverage gap</Text></View> : null}
         </View>
-        <View style={[styles.mapOrigin, origin === 'real' && styles.mapOriginReal]} pointerEvents="none"><Text style={styles.mapOriginText}>{hasReconstruction ? `${origin.toUpperCase()} RECONSTRUCTION` : 'FIXTURE MAP'}</Text></View>
+        <View style={[styles.mapOrigin, origin === 'real' && styles.mapOriginReal]}><Text style={styles.mapOriginText}>{hasReconstruction ? `${origin.toUpperCase()} RECONSTRUCTION` : 'FIXTURE MAP'}</Text></View>
       </View>
 
       {hasReconstruction ? (
@@ -277,12 +277,12 @@ const styles = StyleSheet.create({
   noLocationEyebrow: { color: colours.blue, fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginTop: 14 },
   noLocationTitle: { color: colours.ink, fontSize: 19, fontWeight: '900', marginTop: 5 },
   noLocationBody: { color: colours.inkSoft, fontSize: 10, lineHeight: 16, marginTop: 6, maxWidth: 330 },
-  mapTopRow: { position: 'absolute', top: 13, left: 13, right: 13, flexDirection: 'row', justifyContent: 'space-between' },
+  mapTopRow: { position: 'absolute', top: 13, left: 13, right: 13, flexDirection: 'row', justifyContent: 'space-between', pointerEvents: 'none' },
   mapMetric: { backgroundColor: 'rgba(255,253,248,0.94)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 },
   mapMetricValue: { color: colours.ink, fontSize: 12, fontWeight: '900' },
   mapMetricLabel: { color: colours.inkSoft, fontSize: 8, marginTop: 2 },
-  mapLegend: { position: 'absolute', left: 12, bottom: 12, flexDirection: 'row', gap: 7 },
-  mapOrigin: { position: 'absolute', right: 12, top: 62, backgroundColor: colours.amberSoft, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 7 },
+  mapLegend: { position: 'absolute', left: 12, bottom: 12, flexDirection: 'row', gap: 7, pointerEvents: 'none' },
+  mapOrigin: { position: 'absolute', right: 12, top: 62, backgroundColor: colours.amberSoft, borderRadius: radius.pill, paddingHorizontal: 9, paddingVertical: 7, pointerEvents: 'none' },
   mapOriginReal: { backgroundColor: colours.mossSoft },
   mapOriginText: { color: colours.ink, fontSize: 7, fontWeight: '900', letterSpacing: 0.4 },
   legendItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(23,34,31,0.9)', paddingHorizontal: 9, paddingVertical: 7, borderRadius: radius.pill },
