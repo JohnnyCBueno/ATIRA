@@ -5,7 +5,25 @@ import { syntheticMultiDayLocationTrace } from '../fixtures/syntheticLocationTra
 import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
 import { assessCollectorHealth } from '../collectors/collectorHealth';
-import { BrowserIntegrationStatus, connectOrSyncHuaweiHealth, createBrowserPairingCode, deleteDesktopCollectorHistory, inspectBrowserIntegration, inspectDesktopCollectionControl, inspectDesktopCollector, inspectHuaweiHealthConnector, setDesktopCollectionPaused, syncDesktopObservations, syncHuaweiHealthObservations, unpairBrowserIntegration } from '../collectors/desktopCollectorClient';
+import {
+  BrowserIntegrationStatus,
+  connectOrSyncHuaweiHealth,
+  createBrowserPairingCode,
+  createDesktopDevicePairingCode,
+  deleteDesktopCollectorHistory,
+  disconnectDesktopMobileDevice,
+  DesktopDeviceConnectionStatus,
+  inspectBrowserIntegration,
+  inspectDesktopCollectionControl,
+  inspectDesktopCollector,
+  inspectDesktopMobileDevice,
+  inspectHuaweiHealthConnector,
+  pairDesktopMobileDevice,
+  setDesktopCollectionPaused,
+  syncDesktopObservations,
+  syncHuaweiHealthObservations,
+  unpairBrowserIntegration,
+} from '../collectors/desktopCollectorClient';
 import { locationDayResultToRecord } from '../reconstruction/locationDayPresentation';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
 import { desktopDayResultsToRecord, reconstructDesktopActivity, withoutDesktopDerivedData } from '../reconstruction/desktopActivityEngine';
@@ -36,6 +54,7 @@ export function useTimelineStore() {
   const [digitalActivityRules, setDigitalActivityRules] = useState<DigitalActivityRule[]>([]);
   const [desktopControl, setDesktopControl] = useState({ available: false, paused: false, running: false });
   const [browserIntegration, setBrowserIntegration] = useState<BrowserIntegrationStatus>({ paired: false, pairedAt: null, lastObservedAt: null, available: false, connectedBrowserCount: 0, browsers: [] });
+  const [desktopDeviceConnection, setDesktopDeviceConnection] = useState<DesktopDeviceConnectionStatus>({ supported: Platform.OS !== 'web', paired: false, address: null, deviceLabel: null, pairedAt: null, lastSyncedAt: null });
   const desktopSyncInFlight = useRef(false);
   const collectorHealth = useMemo(() => collectorStatuses.map((status) => assessCollectorHealth(status)), [collectorStatuses]);
 
@@ -89,6 +108,7 @@ export function useTimelineStore() {
       await repository.upsertCollectorStatus(await inspectHuaweiHealthConnector());
       setDesktopControl(await inspectDesktopCollectionControl());
       setBrowserIntegration(await inspectBrowserIntegration());
+      setDesktopDeviceConnection(await inspectDesktopMobileDevice());
       await refresh();
     } catch (cause) {
       setError(databaseStartupMessage(cause));
@@ -293,6 +313,27 @@ export function useTimelineStore() {
     setBrowserIntegration(await unpairBrowserIntegration());
   }, []);
 
+  const requestDesktopDevicePairingCode = useCallback(() => createDesktopDevicePairingCode(), []);
+
+  const pairDesktopMobile = useCallback(async (address: string, code: string) => {
+    setActionError(null);
+    try {
+      setDesktopDeviceConnection(await pairDesktopMobileDevice(address, code));
+      await syncDesktopObservations(repository);
+      await reconstructStoredDesktopDays(repository);
+      await refresh();
+      setDesktopDeviceConnection(await inspectDesktopMobileDevice());
+    } catch (cause) {
+      const message = cause instanceof Error ? `Desktop companion: ${cause.message}` : 'The iPhone could not pair with Windows.';
+      setActionError(message);
+      throw cause;
+    }
+  }, [refresh, repository]);
+
+  const disconnectDesktopMobile = useCallback(async () => {
+    setDesktopDeviceConnection(await disconnectDesktopMobileDevice());
+  }, []);
+
   return {
     days,
     collectorStatuses,
@@ -309,6 +350,7 @@ export function useTimelineStore() {
     digitalActivityRules,
     desktopControl,
     browserIntegration,
+    desktopDeviceConnection,
     retry: initialize,
     refresh,
     updateEvent,
@@ -324,6 +366,9 @@ export function useTimelineStore() {
     deleteDesktopHistory,
     requestBrowserPairingCode,
     disconnectBrowserIntegration,
+    requestDesktopDevicePairingCode,
+    pairDesktopMobile,
+    disconnectDesktopMobile,
   };
 }
 

@@ -34,7 +34,7 @@ const filters: Array<{ id: MapFilter; label: string }> = [
   { id: 'coverage_gap', label: 'Gaps' },
 ];
 
-interface Props {
+export interface RouteMapProps {
   day: DayRecord;
   segments: LocationSegmentRecord[];
   knownPlaceClustering: KnownPlaceClusteringResult;
@@ -48,7 +48,7 @@ export function InteractiveRouteMap({
   knownPlaceClustering,
   selectedSegmentId,
   onSelectSegment,
-}: Props) {
+}: RouteMapProps) {
   const [filter, setFilter] = useState<MapFilter>('all');
   const [viewport, setViewport] = useState(overviewViewport);
   const projected = useMemo(() => projectLocationSegments(segments, MAP_WIDTH, MAP_HEIGHT, 48), [segments]);

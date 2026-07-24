@@ -8,7 +8,13 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.johnnycomins.atira"
+      "bundleIdentifier": "com.johnnycomins.atira",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Allow ATIRA to privately import activity from your paired Windows laptop on the same Wi-Fi.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "package": "com.johnnycomins.atira",
@@ -47,7 +53,8 @@
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      "expo-maps"
     ],
     "extra": {
       "eas": {

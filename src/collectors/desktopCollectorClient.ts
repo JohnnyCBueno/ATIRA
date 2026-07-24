@@ -1,5 +1,12 @@
 import { CollectorRecord, CollectorStatus, DeviceRecord, RawObservation, TimelineRepository } from '../data/contracts';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
+import {
+  DesktopDeviceConnectionStatus,
+  fetchPairedDesktopJson,
+  forgetDesktopDevice,
+  inspectDesktopDeviceConnection,
+  pairDesktopDevice,
+} from './desktopDeviceConnector';
 
 const DESKTOP_COMPANION_URL = 'http://127.0.0.1:43123';
 const REQUEST_TIMEOUT_MS = 1800;
@@ -40,6 +47,8 @@ export interface BrowserIntegrationStatus {
   browsers: { browser: string; pairedAt: string; lastObservedAt: string | null }[];
 }
 
+export type { DesktopDeviceConnectionStatus } from './desktopDeviceConnector';
+
 export async function inspectDesktopCollectionControl() {
   if (!globalThis.atiraDesktop) return { available: false, paused: false, running: false };
   const status = await globalThis.atiraDesktop.collector.status();
@@ -77,8 +86,40 @@ export async function unpairBrowserIntegration() {
   return inspectBrowserIntegration();
 }
 
+export async function createDesktopDevicePairingCode() {
+  if (!globalThis.atiraDesktop) throw new Error('Phone pairing is available in the installed Windows app.');
+  return globalThis.atiraDesktop.collector.createDevicePairingCode();
+}
+
+export async function pairDesktopMobileDevice(address: string, code: string): Promise<DesktopDeviceConnectionStatus> {
+  return pairDesktopDevice(address, code);
+}
+
+export async function disconnectDesktopMobileDevice() {
+  await forgetDesktopDevice();
+  return inspectDesktopDeviceConnection();
+}
+
+export async function inspectDesktopMobileDevice() {
+  return inspectDesktopDeviceConnection();
+}
+
 export async function inspectDesktopCollector(): Promise<CollectorStatus> {
   try {
+    if (Platform.OS !== 'web') {
+      const connection = await inspectDesktopDeviceConnection();
+      if (!connection.paired) {
+        return {
+          source: 'desktop',
+          state: 'permission_required',
+          detail: 'Pair this iPhone with ATIRA on your Windows laptop to bring its activity into this timeline.',
+          operationalState: 'offline',
+          expectedHeartbeatSeconds: 120,
+          backfillState: 'supported',
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
     const control = await inspectDesktopCollectionControl();
     if (control.available && control.paused) {
       return {
@@ -91,7 +132,9 @@ export async function inspectDesktopCollector(): Promise<CollectorStatus> {
         updatedAt: new Date().toISOString(),
       };
     }
-    const health = await fetchJson<DesktopCompanionHealth>('/health');
+    const health = Platform.OS === 'web'
+      ? await fetchJson<DesktopCompanionHealth>('/health')
+      : await fetchPairedDesktopJson<DesktopCompanionHealth>('/integrations/device/status');
     const current = health.currentSession?.application ?? health.currentSession?.state ?? 'waiting for first sample';
     return {
       source: 'desktop',
@@ -106,7 +149,9 @@ export async function inspectDesktopCollector(): Promise<CollectorStatus> {
     return {
       source: 'desktop',
       state: 'temporarily_unavailable',
-      detail: 'Windows companion is not running. Start it with: npm run desktop:collector',
+      detail: Platform.OS === 'web'
+        ? 'Windows companion is not running. Start it with: npm run desktop:collector'
+        : 'The paired Windows laptop is not reachable. Keep it running on the same Wi-Fi, then sync again.',
       operationalState: 'offline',
       expectedHeartbeatSeconds: 120,
       backfillState: 'complete',
@@ -118,9 +163,13 @@ export async function inspectDesktopCollector(): Promise<CollectorStatus> {
 export async function syncDesktopObservations(repository: TimelineRepository): Promise<CollectorStatus> {
   let payload: { device: unknown; collector: unknown; observations: unknown[] };
   try {
-    payload = await fetchJson<{ device: unknown; collector: unknown; observations: unknown[] }>('/observations');
+    payload = Platform.OS === 'web'
+      ? await fetchJson<{ device: unknown; collector: unknown; observations: unknown[] }>('/observations')
+      : await fetchPairedDesktopJson<{ device: unknown; collector: unknown; observations: unknown[] }>('/integrations/device/observations');
   } catch (cause) {
-    throw new Error('Desktop companion is not reachable. Start it in PowerShell with: npm run desktop:collector', { cause });
+    throw new Error(Platform.OS === 'web'
+      ? 'Desktop companion is not reachable. Start it in PowerShell with: npm run desktop:collector'
+      : 'The iPhone could not sync with Windows. Keep both devices on the same Wi-Fi and leave ATIRA running on Windows.', { cause });
   }
   if (!isDeviceRecord(payload.device) || !isCollectorRecord(payload.collector) || payload.collector.deviceId !== payload.device.id) {
     throw new Error('Desktop companion returned an invalid device identity.');

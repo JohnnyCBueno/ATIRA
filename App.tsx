@@ -38,6 +38,7 @@ export default function App() {
     digitalActivityRules,
     desktopControl,
     browserIntegration,
+    desktopDeviceConnection,
     retry,
     updateEvent,
     captureLocation,
@@ -52,6 +53,9 @@ export default function App() {
     deleteDesktopHistory,
     requestBrowserPairingCode,
     disconnectBrowserIntegration,
+    requestDesktopDevicePairingCode,
+    pairDesktopMobile,
+    disconnectDesktopMobile,
   } = useTimelineStore();
   const { width } = useWindowDimensions();
   const profile = profiles.find((item) => item.id === profileId) ?? profiles[1];
@@ -94,6 +98,10 @@ export default function App() {
         browserIntegration={browserIntegration}
         onRequestBrowserPairingCode={requestBrowserPairingCode}
         onDisconnectBrowser={disconnectBrowserIntegration}
+        desktopDeviceConnection={desktopDeviceConnection}
+        onRequestDesktopDevicePairingCode={requestDesktopDevicePairingCode}
+        onPairDesktopMobile={pairDesktopMobile}
+        onDisconnectDesktopMobile={disconnectDesktopMobile}
       />
     );
     return (
@@ -106,7 +114,7 @@ export default function App() {
         onOpenEvent={(event) => setSelectedEventId(event.id)}
       />
     );
-  }, [actionError, activeTab, browserIntegration, captureLocation, collectorStatuses, connectHuaweiHealth, days, deleteDesktopHistory, deleteDigitalActivityRule, desktopControl, devices, diagnostics, digitalActivityRules, disconnectBrowserIntegration, enableBackgroundLocation, knownPlaceClustering, lastReconstruction, locationSegments, observations, profile, requestBrowserPairingCode, runSyntheticReconstruction, selectedDay, setDesktopPaused, syncDesktopActivity, updateDeviceLabel, upsertDigitalActivityRule]);
+  }, [actionError, activeTab, browserIntegration, captureLocation, collectorStatuses, connectHuaweiHealth, days, deleteDesktopHistory, deleteDigitalActivityRule, desktopControl, desktopDeviceConnection, devices, diagnostics, digitalActivityRules, disconnectBrowserIntegration, disconnectDesktopMobile, enableBackgroundLocation, knownPlaceClustering, lastReconstruction, locationSegments, observations, pairDesktopMobile, profile, requestBrowserPairingCode, requestDesktopDevicePairingCode, runSyntheticReconstruction, selectedDay, setDesktopPaused, syncDesktopActivity, updateDeviceLabel, upsertDigitalActivityRule]);
 
   if (loading) {
     return (

@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld('atiraDesktop', {
     delete: (range) => ipcRenderer.invoke('collector:delete', range),
     createBrowserPairingCode: () => ipcRenderer.invoke('collector:browser-pairing-code'),
     unpairBrowser: () => ipcRenderer.invoke('collector:browser-unpair'),
+    createDevicePairingCode: () => ipcRenderer.invoke('collector:device-pairing-code'),
+    unpairDevice: () => ipcRenderer.invoke('collector:device-unpair'),
   },
 });

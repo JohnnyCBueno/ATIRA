@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CollectorStatus, DeviceRecord, RawObservation, RepositoryDiagnostics } from '../data/contracts';
-import { BrowserIntegrationStatus } from '../collectors/desktopCollectorClient';
+import { BrowserIntegrationStatus, DesktopDeviceConnectionStatus } from '../collectors/desktopCollectorClient';
 import { ActivityPurpose, AppProfile, AppProfileDefinition, CapabilityItem, DigitalActivityCategory, DigitalActivityRule } from '../domain/types';
 import { profiles } from '../fixtures/demoDay';
 import { LocationReconstructionResult } from '../reconstruction/locationEngine';
@@ -41,13 +41,17 @@ interface Props {
   browserIntegration: BrowserIntegrationStatus;
   onRequestBrowserPairingCode: () => Promise<{ code: string; expiresAt: string }>;
   onDisconnectBrowser: () => Promise<void>;
+  desktopDeviceConnection: DesktopDeviceConnectionStatus;
+  onRequestDesktopDevicePairingCode: () => Promise<{ code: string; expiresAt: string; addresses: string[] }>;
+  onPairDesktopMobile: (address: string, code: string) => Promise<void>;
+  onDisconnectDesktopMobile: () => Promise<void>;
 }
 
 const collectorLabels: Record<CollectorStatus['source'], string> = {
   location: 'Location', motion: 'Motion', calendar: 'Calendar', desktop: 'Desktop', phone: 'Phone activity', health: 'Health',
 };
 
-export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnostics, actionError, lastReconstruction, knownPlaceCount, onCaptureLocation, onEnableBackgroundLocation, onSyncDesktopActivity, onConnectHuaweiHealth, onRunSyntheticReconstruction, devices, observations, digitalActivityRules, onUpdateDeviceLabel, onUpsertDigitalActivityRule, onDeleteDigitalActivityRule, desktopControl, onSetDesktopPaused, onDeleteDesktopHistory, browserIntegration, onRequestBrowserPairingCode, onDisconnectBrowser }: Props) {
+export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnostics, actionError, lastReconstruction, knownPlaceCount, onCaptureLocation, onEnableBackgroundLocation, onSyncDesktopActivity, onConnectHuaweiHealth, onRunSyntheticReconstruction, devices, observations, digitalActivityRules, onUpdateDeviceLabel, onUpsertDigitalActivityRule, onDeleteDigitalActivityRule, desktopControl, onSetDesktopPaused, onDeleteDesktopHistory, browserIntegration, onRequestBrowserPairingCode, onDisconnectBrowser, desktopDeviceConnection, onRequestDesktopDevicePairingCode, onPairDesktopMobile, onDisconnectDesktopMobile }: Props) {
   const [localProcessing, setLocalProcessing] = useState(true);
   const [quickChecks, setQuickChecks] = useState(true);
   const [locationBusy, setLocationBusy] = useState<'sample' | 'background' | null>(null);
@@ -58,6 +62,10 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
   const [pendingDelete, setPendingDelete] = useState<'7d' | '30d' | 'all' | null>(null);
   const [browserCode, setBrowserCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [browserBusy, setBrowserBusy] = useState(false);
+  const [devicePairingAddress, setDevicePairingAddress] = useState('');
+  const [devicePairingCode, setDevicePairingCode] = useState('');
+  const [windowsPairing, setWindowsPairing] = useState<{ code: string; expiresAt: string; addresses: string[] } | null>(null);
+  const [devicePairingBusy, setDevicePairingBusy] = useState(false);
   const locationStatus = collectorStatuses.find((item) => item.source === 'location');
   const desktopStatus = collectorStatuses.find((item) => item.source === 'desktop');
   const healthStatus = collectorStatuses.find((item) => item.source === 'health');
@@ -105,6 +113,18 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
       // The repository hook exposes the user-facing failure through actionError.
     } finally {
       setHuaweiBusy(false);
+    }
+  };
+
+  const pairWindows = async () => {
+    setDevicePairingBusy(true);
+    try {
+      await onPairDesktopMobile(devicePairingAddress, devicePairingCode);
+      setDevicePairingCode('');
+    } catch {
+      // The repository hook exposes the user-facing failure through actionError.
+    } finally {
+      setDevicePairingBusy(false);
     }
   };
 
@@ -172,10 +192,72 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
         </View>
         <Text style={styles.desktopDetail}>{desktopStatus?.detail ?? 'Checking the local companion…'}</Text>
         <View style={styles.desktopPrivacyRow}><Text style={styles.desktopPrivacyItem}>No screenshots</Text><Text style={styles.desktopPrivacyItem}>No keystrokes</Text><Text style={styles.desktopPrivacyItem}>Titles off</Text></View>
-        <Pressable accessibilityRole="button" disabled={desktopBusy} onPress={() => void syncDesktop()} style={[styles.desktopButton, desktopBusy && styles.disabled]}>
-          <Text style={styles.desktopButtonText}>{desktopBusy ? 'Syncing…' : 'Sync desktop sessions'}</Text>
-        </Pressable>
-        <Text style={styles.desktopCommand}>Start in PowerShell: npm run desktop:collector</Text>
+        {desktopControl.available ? (
+          <>
+            {windowsPairing ? (
+              <View style={styles.browserCodeBox}>
+                <Text style={styles.browserCodeLabel}>PAIR THIS WINDOWS LAPTOP · EXPIRES IN 5 MINUTES</Text>
+                <Text selectable style={styles.browserCode}>{windowsPairing.code}</Text>
+                <Text selectable style={styles.desktopCommand}>Windows address: {windowsPairing.addresses.join(' or ') || 'Connect Windows to Wi-Fi'}</Text>
+                <Text style={styles.desktopCommand}>On the iPhone, open You → Windows companion and enter this address and code.</Text>
+              </View>
+            ) : null}
+            <Pressable
+              disabled={devicePairingBusy}
+              onPress={() => {
+                setDevicePairingBusy(true);
+                void onRequestDesktopDevicePairingCode().then(setWindowsPairing).finally(() => setDevicePairingBusy(false));
+              }}
+              style={[styles.desktopButton, devicePairingBusy && styles.disabled]}
+            >
+              <Text style={styles.desktopButtonText}>{devicePairingBusy ? 'Preparing…' : 'Connect my iPhone'}</Text>
+            </Pressable>
+          </>
+        ) : desktopDeviceConnection.supported && !desktopDeviceConnection.paired ? (
+          <>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setDevicePairingAddress}
+              placeholder="Windows address, e.g. 192.168.1.20:43123"
+              placeholderTextColor={colours.inkSoft}
+              style={styles.pairingInput}
+              value={devicePairingAddress}
+            />
+            <TextInput
+              keyboardType="number-pad"
+              maxLength={6}
+              onChangeText={(value) => setDevicePairingCode(value.replace(/\D/g, ''))}
+              placeholder="Six-digit code"
+              placeholderTextColor={colours.inkSoft}
+              style={styles.pairingInput}
+              value={devicePairingCode}
+            />
+            <Pressable
+              accessibilityRole="button"
+              disabled={devicePairingBusy}
+              onPress={() => void pairWindows()}
+              style={[styles.desktopButton, devicePairingBusy && styles.disabled]}
+            >
+              <Text style={styles.desktopButtonText}>{devicePairingBusy ? 'Connecting…' : 'Pair and import Windows activity'}</Text>
+            </Pressable>
+            <Text style={styles.desktopCommand}>Generate the code in ATIRA on Windows. Both devices must be on the same private Wi-Fi.</Text>
+          </>
+        ) : (
+          <>
+            <Pressable accessibilityRole="button" disabled={desktopBusy} onPress={() => void syncDesktop()} style={[styles.desktopButton, desktopBusy && styles.disabled]}>
+              <Text style={styles.desktopButtonText}>{desktopBusy ? 'Syncing…' : 'Sync desktop sessions'}</Text>
+            </Pressable>
+            {desktopDeviceConnection.paired ? (
+              <>
+                <Text style={styles.desktopCommand}>Paired with {desktopDeviceConnection.deviceLabel} at {desktopDeviceConnection.address}</Text>
+                <Pressable disabled={devicePairingBusy} onPress={() => void onDisconnectDesktopMobile()} style={styles.disconnectButton}>
+                  <Text style={styles.disconnectButtonText}>Forget Windows connection</Text>
+                </Pressable>
+              </>
+            ) : <Text style={styles.desktopCommand}>{Platform.OS === 'web' ? 'Start in PowerShell: npm run desktop:collector' : 'Pair Windows before syncing.'}</Text>}
+          </>
+        )}
         {actionError?.startsWith('Desktop companion') ? <Text style={styles.desktopError}>{actionError}</Text> : null}
       </View>
 
@@ -533,6 +615,9 @@ const styles = StyleSheet.create({
   desktopButton: { minHeight: 42, borderRadius: 13, backgroundColor: colours.blue, alignItems: 'center', justifyContent: 'center', marginTop: 13 },
   desktopButtonText: { color: colours.white, fontSize: 10, fontWeight: '900' },
   desktopCommand: { color: colours.inkSoft, fontSize: 8, textAlign: 'center', marginTop: 8 },
+  pairingInput: { minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: colours.line, color: colours.ink, backgroundColor: colours.surfaceMuted, paddingHorizontal: 12, marginTop: 10, fontSize: 11 },
+  disconnectButton: { alignItems: 'center', paddingVertical: 10, marginTop: 3 },
+  disconnectButtonText: { color: colours.inkSoft, fontSize: 9, fontWeight: '800' },
   browserCodeBox: { backgroundColor: colours.surfaceMuted, borderRadius: 13, padding: 13, alignItems: 'center', marginTop: 13 },
   browserCodeLabel: { color: colours.inkSoft, fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
   browserCode: { color: colours.ink, fontSize: 25, fontWeight: '900', letterSpacing: 6, marginTop: 6 },

@@ -4,12 +4,14 @@ import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import { DesktopSessionizer } from './sessionizer.mjs';
 import { loadOrCreateDesktopIdentity } from './device-identity.mjs';
 import { HuaweiHealthConnector } from '../connectors/huawei-health/huawei-health.mjs';
 import { appendEncryptedObservation, loadEncryptedObservations, parseEncryptionKey, rewriteEncryptedObservations } from './encrypted-observation-store.mjs';
 import { BrowserPairing } from './browser-pairing.mjs';
+import { DevicePairing } from './device-pairing.mjs';
 
 const collectorDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(collectorDirectory, '..', '..');
@@ -20,6 +22,7 @@ const dataDirectory = options.dataDirectory
 const observationPath = path.join(dataDirectory, 'observations.ndjson');
 const encryptedObservationPath = path.join(dataDirectory, 'observations.atira');
 const browserPairingPath = path.join(dataDirectory, 'browser-pairing.atira');
+const devicePairingPath = path.join(dataDirectory, 'device-pairing.atira');
 const encryptionKey = parseEncryptionKey(process.env.ATIRA_COLLECTOR_ENCRYPTION_KEY);
 const pidPath = path.join(dataDirectory, 'collector.pid');
 const samplerPath = path.join(collectorDirectory, 'windows-sampler.ps1');
@@ -34,11 +37,19 @@ await mkdir(dataDirectory, { recursive: true });
 const identity = await loadOrCreateDesktopIdentity(dataDirectory);
 const browserPairing = new BrowserPairing({ filePath: browserPairingPath, encryptionKey });
 await browserPairing.load();
+const devicePairing = new DevicePairing({ filePath: devicePairingPath, encryptionKey });
+await devicePairing.load();
 const sessionizer = new DesktopSessionizer({ observationNamespace: identity.device.id });
 await loadObservations();
 await writeFile(pidPath, String(process.pid), 'utf8');
 
 const server = createServer((request, response) => {
+  const localRequest = isLoopbackAddress(request.socket.remoteAddress);
+  const deviceSyncPath = request.url?.startsWith('/integrations/device/') ?? false;
+  if (!localRequest && (!options.allowDeviceSync || !deviceSyncPath)) {
+    sendJson(response, 403, { error: 'This collector endpoint is available only on the Windows computer.' });
+    return;
+  }
   const origin = request.headers.origin;
   const extensionOrigin = isExtensionOrigin(origin);
   if (origin && !allowedOrigins.has(origin) && !extensionOrigin) {
@@ -96,6 +107,35 @@ const server = createServer((request, response) => {
       .catch((error) => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }));
     return;
   }
+  if (request.method === 'POST' && url.pathname === '/control/device-pairing-code') {
+    if (!hasControlAuthorization(request)) return sendJson(response, 403, { error: 'Invalid collector control token.' });
+    sendJson(response, 200, {
+      ...devicePairing.createCode(),
+      addresses: localNetworkAddresses().map((address) => `${address}:${options.port}`),
+    });
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/control/device-unpair') {
+    if (!hasControlAuthorization(request)) return sendJson(response, 403, { error: 'Invalid collector control token.' });
+    void devicePairing.unpair().then(() => sendJson(response, 200, devicePairing.status()))
+      .catch((error) => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/integrations/device/pair') {
+    if (!options.allowDeviceSync) return sendJson(response, 403, { error: 'Phone sync is not enabled on this Windows collector.' });
+    void readRequestJson(request).then(async ({ code, clientId, label }) => {
+      const token = await devicePairing.pair(String(code ?? ''), String(clientId ?? ''), String(label ?? 'ATIRA mobile device'));
+      sendJson(response, 200, { token, device: identity.device, status: devicePairing.status() });
+    }).catch((error) => sendJson(response, 403, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/integrations/device/unpair') {
+    const suppliedToken = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+    if (!devicePairing.authenticates(suppliedToken)) return sendJson(response, 403, { error: 'This phone is not paired with the Windows collector.' });
+    void devicePairing.unpair().then(() => sendJson(response, 200, { paired: false }))
+      .catch((error) => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
   if (request.method === 'POST' && url.pathname === '/integrations/browser/pair') {
     if (!extensionOrigin) return sendJson(response, 403, { error: 'Pairing is available only to a browser extension.' });
     void readRequestJson(request).then(async ({ code, extensionInstallId, browser }) => {
@@ -127,6 +167,35 @@ const server = createServer((request, response) => {
   }
   if (request.method !== 'GET') {
     sendJson(response, 405, { error: 'This companion API is read-only.' });
+    return;
+  }
+
+  if (url.pathname === '/integrations/device/status' || url.pathname === '/integrations/device/observations') {
+    const suppliedToken = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+    if (!devicePairing.authenticates(suppliedToken)) return sendJson(response, 403, { error: 'This phone is not paired with the Windows collector.' });
+    if (url.pathname === '/integrations/device/status') {
+      sendJson(response, 200, {
+        running: true,
+        platform: 'windows',
+        device: identity.device,
+        collector: identity.collector,
+        startedAt,
+        samplingIntervalMs: options.intervalMilliseconds,
+        completedObservationCount: observations.length,
+        currentSession: sessionizer.snapshot(),
+        privacy: {
+          windowTitles: options.includeWindowTitles,
+          screenshots: false,
+          keystrokes: false,
+          documentContents: false,
+          urls: false,
+        },
+      });
+      return;
+    }
+    void devicePairing.markSynced().then(() => {
+      sendJson(response, 200, { device: identity.device, collector: identity.collector, observations: observations.slice(-2000) });
+    }).catch((error) => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }));
     return;
   }
 
@@ -195,8 +264,8 @@ server.on('error', async (error) => {
   await stop(1);
 });
 
-server.listen(options.port, '127.0.0.1', () => {
-  console.log(`[ATIRA desktop] Local companion ready at http://127.0.0.1:${options.port}`);
+server.listen(options.port, options.allowDeviceSync ? '0.0.0.0' : '127.0.0.1', () => {
+  console.log(`[ATIRA desktop] Local companion ready on port ${options.port}`);
   console.log(`[ATIRA desktop] Window titles: ${options.includeWindowTitles ? 'enabled by explicit opt-in' : 'off'}`);
   console.log('[ATIRA desktop] Press Ctrl+C to stop and close the current session.');
   if (!options.serveOnly) startSampler();
@@ -377,7 +446,28 @@ function parseOptions(argumentsList) {
     serveOnly: argumentsList.includes('--serve-only'),
     dataDirectory: stringOptionValue(argumentsList, '--data-dir'),
     controlToken: stringOptionValue(argumentsList, '--control-token'),
+    allowDeviceSync: argumentsList.includes('--allow-device-sync'),
   };
+}
+
+function isLoopbackAddress(address) {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
+function localNetworkAddresses() {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter((item) => item && item.family === 'IPv4' && !item.internal && isPrivateIpv4(item.address))
+    .map((item) => item.address);
+}
+
+function isPrivateIpv4(address) {
+  const parts = address.split('.').map(Number);
+  return parts.length === 4 && (
+    parts[0] === 10 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168)
+  );
 }
 
 function stringOptionValue(argumentsList, name) {

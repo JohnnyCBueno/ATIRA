@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { DayRouteMap } from '../components/DayRouteMap';
 import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
-import { InteractiveRouteMap } from '../components/InteractiveRouteMap';
 import { TimelineEventCard } from '../components/TimelineEventCard';
 import { LocationSegmentRecord, ObservationOrigin } from '../data/contracts';
 import { DayPlace, DayRecord, DesktopUsageSummary, DigitalActivityCategory, TimelineEvent } from '../domain/types';
@@ -67,7 +67,7 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
   useEffect(() => setSelectedSegmentId(null), [day.id]);
   return (
     <>
-      <InteractiveRouteMap
+      <DayRouteMap
         day={day}
         segments={segments}
         knownPlaceClustering={knownPlaceClustering}

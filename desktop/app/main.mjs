@@ -126,7 +126,7 @@ async function startCollector() {
   const dataDirectory = path.join(app.getPath('userData'), 'collector');
   const encryptionKey = await loadOrCreateCollectorKey();
   collectorControlToken = randomBytes(32).toString('base64url');
-  collectorProcess = spawn(process.execPath, [collectorPath, '--data-dir', dataDirectory, '--control-token', collectorControlToken], {
+  collectorProcess = spawn(process.execPath, [collectorPath, '--data-dir', dataDirectory, '--control-token', collectorControlToken, '--allow-device-sync'], {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ATIRA_COLLECTOR_ENCRYPTION_KEY: encryptionKey },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -168,6 +168,8 @@ function registerDesktopBridge() {
   });
   ipcMain.handle('collector:browser-pairing-code', () => collectorControlRequest('/control/browser-pairing-code'));
   ipcMain.handle('collector:browser-unpair', () => collectorControlRequest('/control/browser-unpair'));
+  ipcMain.handle('collector:device-pairing-code', () => collectorControlRequest('/control/device-pairing-code'));
+  ipcMain.handle('collector:device-unpair', () => collectorControlRequest('/control/device-unpair'));
 }
 
 async function collectorControlRequest(pathname) {
