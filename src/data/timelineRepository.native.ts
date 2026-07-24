@@ -351,6 +351,17 @@ async function ensureColumn(database: SQLite.SQLiteDatabase, table: string, colu
   if (!columns.some((item) => item.name === column)) await database.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+async function withExclusiveKeyedTransaction(
+  database: SQLite.SQLiteDatabase,
+  task: (transaction: SQLite.SQLiteDatabase) => Promise<void>,
+) {
+  const key = await getOrCreateDatabaseKey();
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.execAsync(`PRAGMA key = '${key}'`);
+    await task(transaction);
+  });
+}
+
 async function insertEvent(database: SQLite.SQLiteDatabase, dayId: string, event: TimelineEvent, sortIndex: number) {
   await database.runAsync(
     `INSERT OR REPLACE INTO timeline_events
@@ -389,7 +400,7 @@ async function insertEvent(database: SQLite.SQLiteDatabase, dayId: string, event
 async function seedIfEmpty(database: SQLite.SQLiteDatabase, seedDays: DayRecord[]) {
   const row = await database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM day_records');
   if ((row?.count ?? 0) > 0) return;
-  await database.withExclusiveTransactionAsync(async (transaction) => {
+  await withExclusiveKeyedTransaction(database, async (transaction) => {
     for (const day of seedDays) {
       await transaction.runAsync(
         `INSERT INTO day_records
@@ -495,7 +506,7 @@ class NativeTimelineRepository implements TimelineRepository {
 
   async upsertDay(day: DayRecord) {
     const database = await getDatabase();
-    await database.withExclusiveTransactionAsync(async (transaction) => {
+    await withExclusiveKeyedTransaction(database, async (transaction) => {
       const eventIds = await transaction.getAllAsync<{ id: string }>('SELECT id FROM timeline_events WHERE day_id = ?', day.id);
       for (const event of eventIds) await transaction.runAsync('DELETE FROM evidence_items WHERE event_id = ?', event.id);
       await transaction.runAsync('DELETE FROM timeline_events WHERE day_id = ?', day.id);
@@ -525,7 +536,7 @@ class NativeTimelineRepository implements TimelineRepository {
 
   async saveEvent(dayId: string, event: TimelineEvent, correction: EventCorrection) {
     const database = await getDatabase();
-    await database.withExclusiveTransactionAsync(async (transaction) => {
+    await withExclusiveKeyedTransaction(database, async (transaction) => {
       const indexRow = await transaction.getFirstAsync<{ sort_index: number }>('SELECT sort_index FROM timeline_events WHERE id = ?', event.id);
       await insertEvent(transaction, dayId, event, indexRow?.sort_index ?? 0);
       await transaction.runAsync(
@@ -546,7 +557,7 @@ class NativeTimelineRepository implements TimelineRepository {
   async appendObservations(observations: RawObservation[]) {
     if (observations.length === 0) return;
     const database = await getDatabase();
-    await database.withExclusiveTransactionAsync(async (transaction) => {
+    await withExclusiveKeyedTransaction(database, async (transaction) => {
       for (const observation of observations) {
         await transaction.runAsync(
           `INSERT INTO raw_observations
@@ -775,7 +786,7 @@ class NativeTimelineRepository implements TimelineRepository {
 
   async replaceLocationSegments(dayId: string, segments: LocationSegmentRecord[]) {
     const database = await getDatabase();
-    await database.withExclusiveTransactionAsync(async (transaction) => {
+    await withExclusiveKeyedTransaction(database, async (transaction) => {
       await transaction.runAsync('DELETE FROM location_segments WHERE day_id = ?', dayId);
       for (const segment of segments) {
         await transaction.runAsync(

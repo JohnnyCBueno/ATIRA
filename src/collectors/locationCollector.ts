@@ -16,11 +16,26 @@ export async function inspectLocationCollector(): Promise<CollectorStatus> {
   if (!servicesEnabled) {
     return { source: 'location', state: 'temporarily_unavailable', detail: 'Device location services are switched off.', operationalState: 'offline', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
   }
-  const permission = await Location.getForegroundPermissionsAsync();
-  if (permission.status === 'granted') {
+  const [foregroundPermission, backgroundPermission, backgroundUpdatesStarted] = await Promise.all([
+    Location.getForegroundPermissionsAsync(),
+    Location.getBackgroundPermissionsAsync(),
+    Location.hasStartedLocationUpdatesAsync(ATIRA_BACKGROUND_LOCATION_TASK),
+  ]);
+  if (foregroundPermission.status === 'granted' && backgroundPermission.status === 'granted' && backgroundUpdatesStarted) {
+    return {
+      source: 'location',
+      state: 'available_full',
+      detail: 'Background location collection is registered and running.',
+      operationalState: 'collecting',
+      expectedHeartbeatSeconds: 900,
+      backfillState: 'not_supported',
+      updatedAt: now,
+    };
+  }
+  if (foregroundPermission.status === 'granted') {
     return { source: 'location', state: 'available_limited', detail: 'Foreground location is allowed; continuous collection is not running.', operationalState: 'unknown', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
   }
-  if (permission.status === 'denied' && !permission.canAskAgain) {
+  if (foregroundPermission.status === 'denied' && !foregroundPermission.canAskAgain) {
     return { source: 'location', state: 'permission_denied', detail: 'Location is blocked in system settings.', operationalState: 'unknown', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
   }
   return { source: 'location', state: 'permission_required', detail: 'Tap to store one real location observation locally.', operationalState: 'unknown', expectedHeartbeatSeconds: 900, backfillState: 'not_supported', updatedAt: now };
@@ -113,7 +128,7 @@ export async function startBackgroundLocation(repository: TimelineRepository): P
     distanceInterval: 50,
     deferredUpdatesDistance: 200,
     deferredUpdatesInterval: 5 * 60 * 1000,
-    pausesUpdatesAutomatically: true,
+    pausesUpdatesAutomatically: false,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
       notificationTitle: 'ATIRA is remembering your day',
