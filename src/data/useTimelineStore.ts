@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { DayRecord, DigitalActivityRule, TimelineEvent } from '../domain/types';
 import { syntheticMultiDayLocationTrace } from '../fixtures/syntheticLocationTrace';
 import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
@@ -58,6 +58,7 @@ export function useTimelineStore() {
   const [browserIntegration, setBrowserIntegration] = useState<BrowserIntegrationStatus>({ paired: false, pairedAt: null, lastObservedAt: null, available: false, connectedBrowserCount: 0, browsers: [] });
   const [desktopDeviceConnection, setDesktopDeviceConnection] = useState<DesktopDeviceConnectionStatus>({ supported: Platform.OS !== 'web', paired: false, address: null, deviceLabel: null, pairedAt: null, lastSyncedAt: null });
   const desktopSyncInFlight = useRef(false);
+  const foregroundRefreshInFlight = useRef(false);
   const collectorHealth = useMemo(() => collectorStatuses.map((status) => assessCollectorHealth(status)), [collectorStatuses]);
 
   const refresh = useCallback(async () => {
@@ -123,6 +124,24 @@ export function useTimelineStore() {
   useEffect(() => {
     void initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || loading || foregroundRefreshInFlight.current) return;
+      foregroundRefreshInFlight.current = true;
+      void (async () => {
+        await reconstructStoredLocationDays(repository);
+        await repository.upsertCollectorStatus(await inspectLocationCollector());
+        await refresh();
+      })().catch(() => {
+        // Existing timeline data remains available if a foreground refresh fails.
+      }).finally(() => {
+        foregroundRefreshInFlight.current = false;
+      });
+    });
+    return () => subscription.remove();
+  }, [loading, refresh, repository]);
 
   useEffect(() => {
     if (loading || Platform.OS !== 'web') return undefined;

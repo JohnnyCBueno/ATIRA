@@ -4,6 +4,10 @@ import { Platform } from 'react-native';
 import { CollectorStatus, TimelineRepository } from '../data/contracts';
 import { captureFreshThenCached, LocationCaptureUnavailableError } from './locationCapture';
 import { locationToObservation } from './locationObservations';
+import {
+  IOS_LIFE_TIMELINE_SAMPLING_POLICY,
+  matchesIosLifeTimelineSamplingPolicy,
+} from './locationSamplingPolicy';
 import { ATIRA_BACKGROUND_LOCATION_TASK } from './locationTaskName';
 
 const FRESH_LOCATION_TIMEOUT_MS = 12_000;
@@ -22,10 +26,17 @@ export async function inspectLocationCollector(): Promise<CollectorStatus> {
     Location.hasStartedLocationUpdatesAsync(ATIRA_BACKGROUND_LOCATION_TASK),
   ]);
   if (foregroundPermission.status === 'granted' && backgroundPermission.status === 'granted' && backgroundUpdatesStarted) {
+    const registeredOptions = Platform.OS === 'ios'
+      ? await TaskManager.getTaskOptionsAsync<Record<string, unknown> | null>(ATIRA_BACKGROUND_LOCATION_TASK)
+      : null;
+    const usesAdaptiveIosPolicy = Platform.OS !== 'ios'
+      || matchesIosLifeTimelineSamplingPolicy(registeredOptions);
     return {
       source: 'location',
       state: 'available_full',
-      detail: 'Background location collection is registered and running.',
+      detail: usesAdaptiveIosPolicy
+        ? 'Adaptive background location is running and can pause while you are stationary.'
+        : 'Background location is running with an older sampling policy. Tap Enable background to update it.',
       operationalState: 'collecting',
       expectedHeartbeatSeconds: 900,
       backfillState: 'not_supported',
@@ -123,23 +134,36 @@ export async function startBackgroundLocation(repository: TimelineRepository): P
   const background = await Location.requestBackgroundPermissionsAsync();
   if (background.status !== 'granted') return captureDeniedBackgroundStatus(repository, background.canAskAgain);
 
-  await Location.startLocationUpdatesAsync(ATIRA_BACKGROUND_LOCATION_TASK, {
-    accuracy: Location.Accuracy.Balanced,
-    distanceInterval: 50,
-    deferredUpdatesDistance: 200,
-    deferredUpdatesInterval: 5 * 60 * 1000,
-    pausesUpdatesAutomatically: false,
-    showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: 'ATIRA is remembering your day',
-      notificationBody: 'Location is processed into places and journeys on this device.',
-      notificationColor: '#176B5B',
-    },
-  });
+  await Location.startLocationUpdatesAsync(
+    ATIRA_BACKGROUND_LOCATION_TASK,
+    Platform.OS === 'ios'
+      ? {
+        accuracy: Location.Accuracy.High,
+        distanceInterval: IOS_LIFE_TIMELINE_SAMPLING_POLICY.pointDistanceMetres,
+        deferredUpdatesDistance: IOS_LIFE_TIMELINE_SAMPLING_POLICY.backgroundBatchDistanceMetres,
+        deferredUpdatesInterval: IOS_LIFE_TIMELINE_SAMPLING_POLICY.backgroundBatchIntervalMs,
+        pausesUpdatesAutomatically: IOS_LIFE_TIMELINE_SAMPLING_POLICY.pausesAutomatically,
+        showsBackgroundLocationIndicator: IOS_LIFE_TIMELINE_SAMPLING_POLICY.showsBackgroundIndicator,
+        activityType: Location.ActivityType.Other,
+      }
+      : {
+        accuracy: Location.Accuracy.Balanced,
+        distanceInterval: 50,
+        deferredUpdatesDistance: 200,
+        deferredUpdatesInterval: 5 * 60 * 1000,
+        foregroundService: {
+          notificationTitle: 'ATIRA is remembering your day',
+          notificationBody: 'Location is processed into places and journeys on this device.',
+          notificationColor: '#176B5B',
+        },
+      },
+  );
   const status: CollectorStatus = {
     source: 'location',
     state: 'available_full',
-    detail: 'Background location collection is running.',
+    detail: Platform.OS === 'ios'
+      ? 'Adaptive background location is running and can pause while you are stationary.'
+      : 'Background location collection is running.',
     operationalState: 'collecting',
     expectedHeartbeatSeconds: 900,
     backfillState: 'not_supported',
