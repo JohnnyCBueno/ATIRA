@@ -54,7 +54,16 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
-      "expo-maps"
+      "expo-maps",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow ATIRA to scan a one-time pairing QR code shown on your Windows laptop.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      "./modules/atira-healthkit/app.plugin.js"
     ],
     "extra": {
       "eas": {

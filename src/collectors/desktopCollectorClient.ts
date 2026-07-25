@@ -7,6 +7,7 @@ import {
   inspectDesktopDeviceConnection,
   pairDesktopDevice,
 } from './desktopDeviceConnector';
+import { createDesktopPairingQrPayload } from './devicePairingQr';
 
 const DESKTOP_COMPANION_URL = 'http://127.0.0.1:43123';
 const REQUEST_TIMEOUT_MS = 1800;
@@ -88,7 +89,21 @@ export async function unpairBrowserIntegration() {
 
 export async function createDesktopDevicePairingCode() {
   if (!globalThis.atiraDesktop) throw new Error('Phone pairing is available in the installed Windows app.');
-  return globalThis.atiraDesktop.collector.createDevicePairingCode();
+  const pairing = await globalThis.atiraDesktop.collector.createDevicePairingCode();
+  const address = pairing.addresses[0];
+  if (!address) return { ...pairing, qrDataUrl: null };
+  const qrPayload = createDesktopPairingQrPayload({
+    address,
+    code: pairing.code,
+    expiresAt: pairing.expiresAt,
+  });
+  const QRCode = await import('qrcode');
+  const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+    errorCorrectionLevel: 'M',
+    margin: 2,
+    width: 360,
+  });
+  return { ...pairing, qrDataUrl };
 }
 
 export async function pairDesktopMobileDevice(address: string, code: string): Promise<DesktopDeviceConnectionStatus> {

@@ -11,6 +11,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~57.0.7",
     "expo": "~57.0.8",
+    "expo-camera": "~57.0.3",
     "expo-crypto": "~57.0.1",
     "expo-dev-client": "~57.0.9",
     "expo-location": "~57.0.6",
@@ -19,6 +20,7 @@
     "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-task-manager": "~57.0.6",
+    "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
@@ -29,6 +31,7 @@
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
     "@electron-forge/maker-squirrel": "^7.11.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "~19.2.2",
     "concurrently": "^10.0.3",
     "electron": "^43.1.1",

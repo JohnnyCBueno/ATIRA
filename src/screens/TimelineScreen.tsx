@@ -7,11 +7,14 @@ import {
   LocationSegmentRecord,
   ObservationOrigin,
   PlaceCandidateSetRecord,
+  RawObservation,
 } from '../data/contracts';
 import { DayPlace, DayRecord, DesktopUsageSummary, DigitalActivityCategory, TimelineEvent } from '../domain/types';
 import { KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
 import { formatClock, locationSegmentDetail, locationSegmentTitle } from '../reconstruction/locationSegmentPresentation';
+import { normalizeObservationEvidence } from '../triangulation/evidenceNormalizer';
+import { assessPlaceCandidates } from '../reconstruction/placeCandidateEngine';
 import {
   dayIdsForTimelinePeriod,
   isLiveTimelinePeriod,
@@ -30,6 +33,7 @@ interface Props {
   selectedDay: DayRecord;
   locationSegments: LocationSegmentRecord[];
   placeCandidateSets: PlaceCandidateSetRecord[];
+  observations: RawObservation[];
   knownPlaceClustering: KnownPlaceClusteringResult;
   onSelectDay: (dayId: string) => void;
   onOpenEvent: (event: TimelineEvent) => void;
@@ -66,6 +70,7 @@ function DayView({
   onOpenEvent,
   placeCandidateSets,
   onConfirmPlaceCandidate,
+  normalizedEvidence,
 }: {
   day: DayRecord;
   segments: LocationSegmentRecord[];
@@ -75,6 +80,7 @@ function DayView({
   onOpenEvent: (event: TimelineEvent) => void;
   placeCandidateSets: PlaceCandidateSetRecord[];
   onConfirmPlaceCandidate: (segmentId: string, candidateId?: string) => Promise<void>;
+  normalizedEvidence: ReturnType<typeof normalizeObservationEvidence>;
 }) {
   const desktopUsages = day.desktopUsages ?? [];
   const applicationCount = desktopUsages.reduce(
@@ -130,6 +136,7 @@ function DayView({
           onSelectSegment={onSelectSegment}
           placeCandidateSets={placeCandidateSets}
           onConfirmPlaceCandidate={onConfirmPlaceCandidate}
+          normalizedEvidence={normalizedEvidence}
         />
       ) : null}
 
@@ -192,6 +199,7 @@ function LocationSegmentTimeline({
   onSelectSegment,
   placeCandidateSets,
   onConfirmPlaceCandidate,
+  normalizedEvidence,
 }: {
   segments: LocationSegmentRecord[];
   knownPlaceClustering: KnownPlaceClusteringResult;
@@ -199,6 +207,7 @@ function LocationSegmentTimeline({
   onSelectSegment: (segmentId: string | null) => void;
   placeCandidateSets: PlaceCandidateSetRecord[];
   onConfirmPlaceCandidate: (segmentId: string, candidateId?: string) => Promise<void>;
+  normalizedEvidence: ReturnType<typeof normalizeObservationEvidence>;
 }) {
   const assignmentBySegment = new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId]));
   const placeById = new Map(knownPlaceClustering.places.map((place) => [place.id, place]));
@@ -228,6 +237,8 @@ function LocationSegmentTimeline({
             {selected && candidateSet ? (
               <PlaceCandidateCard
                 candidateSet={candidateSet}
+                segment={segment}
+                normalizedEvidence={normalizedEvidence}
                 onConfirm={(candidateId) => onConfirmPlaceCandidate(segment.id, candidateId)}
               />
             ) : null}
@@ -240,11 +251,21 @@ function LocationSegmentTimeline({
 
 function PlaceCandidateCard({
   candidateSet,
+  segment,
+  normalizedEvidence,
   onConfirm,
 }: {
   candidateSet: PlaceCandidateSetRecord;
+  segment: LocationSegmentRecord;
+  normalizedEvidence: ReturnType<typeof normalizeObservationEvidence>;
   onConfirm: (candidateId?: string) => Promise<void>;
 }) {
+  const resolution = assessPlaceCandidates({
+    stay: segment,
+    candidates: candidateSet.candidates,
+    evidence: normalizedEvidence,
+  });
+  const presentedCandidates = resolution.candidates.map((item) => item.candidate);
   const confirmed = candidateSet.decision?.kind === 'candidate'
     ? candidateSet.candidates.find((candidate) => candidate.id === candidateSet.decision?.candidateId)
     : undefined;
@@ -255,10 +276,12 @@ function PlaceCandidateCard({
         <Text style={styles.placeCandidateDecision}>Confirmed by you: {confirmed.name}</Text>
       ) : candidateSet.decision?.kind === 'somewhere_else' ? (
         <Text style={styles.placeCandidateDecision}>You marked this as somewhere else.</Text>
+      ) : resolution.status === 'supported' && resolution.candidates[0] ? (
+        <Text style={styles.placeCandidateDecision}>Evidence currently supports {resolution.candidates[0].candidate.name}, but you can correct it.</Text>
       ) : (
         <Text style={styles.placeCandidateIntro}>These are nearby candidates, not a claim about where you went.</Text>
       )}
-      {candidateSet.candidates.slice(0, 4).map((candidate) => (
+      {presentedCandidates.slice(0, 4).map((candidate) => (
         <Pressable
           key={candidate.id}
           accessibilityRole="button"
@@ -380,6 +403,7 @@ export function TimelineScreen({
   selectedDay,
   locationSegments = [],
   placeCandidateSets = [],
+  observations = [],
   knownPlaceClustering = emptyKnownPlaceClustering,
   onSelectDay,
   onOpenEvent,
@@ -398,6 +422,10 @@ export function TimelineScreen({
   const selectedSegments = useMemo(
     () => locationSegments.filter((segment) => segment.dayId === selectedDay.id),
     [locationSegments, selectedDay.id],
+  );
+  const normalizedEvidence = useMemo(
+    () => normalizeObservationEvidence(observations),
+    [observations],
   );
 
   useEffect(() => setSelectedSegmentId(null), [period, selectedDay.id]);
@@ -451,6 +479,7 @@ export function TimelineScreen({
           onOpenEvent={onOpenEvent}
           placeCandidateSets={placeCandidateSets}
           onConfirmPlaceCandidate={onConfirmPlaceCandidate}
+          normalizedEvidence={normalizedEvidence}
         />
       ) : null}
       {period === 'week' ? <WeekView days={days} selectedDay={selectedDay} onSelectDay={onSelectDay} onSwitchToDay={() => setPeriod('day')} /> : null}

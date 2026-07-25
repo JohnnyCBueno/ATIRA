@@ -49,7 +49,7 @@ public final class AtiraPlaceSearchModule: Module {
   }
 }
 
-private final class InvalidPlaceSearchCoordinateException: Exception {
+private final class InvalidPlaceSearchCoordinateException: Exception, @unchecked Sendable {
   override var reason: String {
     "ATIRA cannot search Apple Maps with an invalid stay centre."
   }

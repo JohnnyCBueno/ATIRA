@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Camera, CameraView } from 'expo-camera';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { CollectorStatus, DeviceRecord, RawObservation, RepositoryDiagnostics } from '../data/contracts';
 import { BrowserIntegrationStatus, DesktopDeviceConnectionStatus } from '../collectors/desktopCollectorClient';
 import { ActivityPurpose, AppProfile, AppProfileDefinition, CapabilityItem, DigitalActivityCategory, DigitalActivityRule } from '../domain/types';
 import { profiles } from '../fixtures/demoDay';
 import { LocationReconstructionResult } from '../reconstruction/locationEngine';
 import { classifyDigitalApplication, classifyDigitalDomain, normalizeDigitalApplication } from '../reconstruction/digitalActivityClassifier';
+import { parseDesktopPairingQrPayload } from '../collectors/devicePairingQr';
 import { colours, radius } from '../theme';
 
 const capabilityIcon: Record<string, string> = { location: '⌖', phone: '▯', health: '♥', desktop: '▱' };
@@ -28,6 +30,7 @@ interface Props {
   onEnableBackgroundLocation: () => Promise<void>;
   onSyncDesktopActivity: () => Promise<void>;
   onConnectHuaweiHealth: () => Promise<void>;
+  onConnectHealthKit: () => Promise<void>;
   onRunSyntheticReconstruction: () => Promise<LocationReconstructionResult>;
   devices: DeviceRecord[];
   observations: RawObservation[];
@@ -42,7 +45,7 @@ interface Props {
   onRequestBrowserPairingCode: () => Promise<{ code: string; expiresAt: string }>;
   onDisconnectBrowser: () => Promise<void>;
   desktopDeviceConnection: DesktopDeviceConnectionStatus;
-  onRequestDesktopDevicePairingCode: () => Promise<{ code: string; expiresAt: string; addresses: string[] }>;
+  onRequestDesktopDevicePairingCode: () => Promise<{ code: string; expiresAt: string; addresses: string[]; qrDataUrl: string | null }>;
   onPairDesktopMobile: (address: string, code: string) => Promise<void>;
   onDisconnectDesktopMobile: () => Promise<void>;
 }
@@ -51,25 +54,31 @@ const collectorLabels: Record<CollectorStatus['source'], string> = {
   location: 'Location', motion: 'Motion', calendar: 'Calendar', desktop: 'Desktop', phone: 'Phone activity', health: 'Health',
 };
 
-export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnostics, actionError, lastReconstruction, knownPlaceCount, onCaptureLocation, onEnableBackgroundLocation, onSyncDesktopActivity, onConnectHuaweiHealth, onRunSyntheticReconstruction, devices, observations, digitalActivityRules, onUpdateDeviceLabel, onUpsertDigitalActivityRule, onDeleteDigitalActivityRule, desktopControl, onSetDesktopPaused, onDeleteDesktopHistory, browserIntegration, onRequestBrowserPairingCode, onDisconnectBrowser, desktopDeviceConnection, onRequestDesktopDevicePairingCode, onPairDesktopMobile, onDisconnectDesktopMobile }: Props) {
+export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnostics, actionError, lastReconstruction, knownPlaceCount, onCaptureLocation, onEnableBackgroundLocation, onSyncDesktopActivity, onConnectHuaweiHealth, onConnectHealthKit, onRunSyntheticReconstruction, devices, observations, digitalActivityRules, onUpdateDeviceLabel, onUpsertDigitalActivityRule, onDeleteDigitalActivityRule, desktopControl, onSetDesktopPaused, onDeleteDesktopHistory, browserIntegration, onRequestBrowserPairingCode, onDisconnectBrowser, desktopDeviceConnection, onRequestDesktopDevicePairingCode, onPairDesktopMobile, onDisconnectDesktopMobile }: Props) {
   const [localProcessing, setLocalProcessing] = useState(true);
   const [quickChecks, setQuickChecks] = useState(true);
   const [locationBusy, setLocationBusy] = useState<'sample' | 'background' | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
   const [desktopBusy, setDesktopBusy] = useState(false);
   const [huaweiBusy, setHuaweiBusy] = useState(false);
+  const [healthKitBusy, setHealthKitBusy] = useState(false);
   const [privacyBusy, setPrivacyBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<'7d' | '30d' | 'all' | null>(null);
   const [browserCode, setBrowserCode] = useState<{ code: string; expiresAt: string } | null>(null);
   const [browserBusy, setBrowserBusy] = useState(false);
   const [devicePairingAddress, setDevicePairingAddress] = useState('');
   const [devicePairingCode, setDevicePairingCode] = useState('');
-  const [windowsPairing, setWindowsPairing] = useState<{ code: string; expiresAt: string; addresses: string[] } | null>(null);
+  const [windowsPairing, setWindowsPairing] = useState<{ code: string; expiresAt: string; addresses: string[]; qrDataUrl: string | null } | null>(null);
   const [devicePairingBusy, setDevicePairingBusy] = useState(false);
+  const [qrPairingBusy, setQrPairingBusy] = useState(false);
+  const [qrPairingError, setQrPairingError] = useState<string | null>(null);
+  const qrSubscription = useRef<ReturnType<typeof CameraView.onModernBarcodeScanned> | null>(null);
   const locationStatus = collectorStatuses.find((item) => item.source === 'location');
   const desktopStatus = collectorStatuses.find((item) => item.source === 'desktop');
   const healthStatus = collectorStatuses.find((item) => item.source === 'health');
   const realSourceCount = new Set(observations.filter((observation) => observation.payload.mocked !== true).map((observation) => observation.source)).size;
+
+  useEffect(() => () => qrSubscription.current?.remove(), []);
 
   const runLocationAction = async (kind: 'sample' | 'background') => {
     setLocationBusy(kind);
@@ -116,6 +125,17 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
     }
   };
 
+  const connectAppleHealth = async () => {
+    setHealthKitBusy(true);
+    try {
+      await onConnectHealthKit();
+    } catch {
+      // The repository hook exposes the user-facing failure through actionError.
+    } finally {
+      setHealthKitBusy(false);
+    }
+  };
+
   const pairWindows = async () => {
     setDevicePairingBusy(true);
     try {
@@ -125,6 +145,41 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
       // The repository hook exposes the user-facing failure through actionError.
     } finally {
       setDevicePairingBusy(false);
+    }
+  };
+
+  const scanWindowsPairingQr = async () => {
+    setQrPairingError(null);
+    setQrPairingBusy(true);
+    try {
+      let permission = await Camera.getCameraPermissionsAsync();
+      if (!permission.granted) permission = await Camera.requestCameraPermissionsAsync();
+      if (!permission.granted) throw new Error('Camera permission is required only to scan the one-time Windows pairing code.');
+      qrSubscription.current?.remove();
+      let handled = false;
+      qrSubscription.current = CameraView.onModernBarcodeScanned((event) => {
+        if (handled) return;
+        handled = true;
+        qrSubscription.current?.remove();
+        qrSubscription.current = null;
+        void (async () => {
+          try {
+            const pairing = parseDesktopPairingQrPayload(event.data);
+            if (Platform.OS === 'ios') await CameraView.dismissScanner();
+            await onPairDesktopMobile(pairing.address, pairing.code);
+          } catch (cause) {
+            setQrPairingError(cause instanceof Error ? cause.message : 'ATIRA could not use this QR code.');
+          } finally {
+            setQrPairingBusy(false);
+          }
+        })();
+      });
+      await CameraView.launchScanner({ barcodeTypes: ['qr'] });
+    } catch (cause) {
+      qrSubscription.current?.remove();
+      qrSubscription.current = null;
+      setQrPairingError(cause instanceof Error ? cause.message : 'ATIRA could not open the QR scanner.');
+      setQrPairingBusy(false);
     }
   };
 
@@ -182,7 +237,12 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
           </Pressable>
         </View>
         <Text style={styles.collectorPrivacy}>Permission is requested only after a button press. Coordinates remain in the local repository.</Text>
-        {actionError && !actionError.startsWith('Desktop companion') && !actionError.startsWith('HUAWEI Health') ? <Text style={styles.actionError}>{actionError}</Text> : null}
+        {actionError
+          && !actionError.startsWith('Desktop companion')
+          && !actionError.startsWith('HUAWEI Health')
+          && !actionError.startsWith('HealthKit')
+          ? <Text style={styles.actionError}>{actionError}</Text>
+          : null}
       </View>
 
       <View style={styles.desktopCard}>
@@ -197,9 +257,16 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
             {windowsPairing ? (
               <View style={styles.browserCodeBox}>
                 <Text style={styles.browserCodeLabel}>PAIR THIS WINDOWS LAPTOP · EXPIRES IN 5 MINUTES</Text>
+                {windowsPairing.qrDataUrl ? (
+                  <Image
+                    accessibilityLabel="One-time ATIRA Windows pairing QR code"
+                    source={{ uri: windowsPairing.qrDataUrl }}
+                    style={styles.devicePairingQr}
+                  />
+                ) : null}
                 <Text selectable style={styles.browserCode}>{windowsPairing.code}</Text>
                 <Text selectable style={styles.desktopCommand}>Windows address: {windowsPairing.addresses.join(' or ') || 'Connect Windows to Wi-Fi'}</Text>
-                <Text style={styles.desktopCommand}>On the iPhone, open You → Windows companion and enter this address and code.</Text>
+                <Text style={styles.desktopCommand}>On the iPhone or iPad, open You → Windows companion and scan this QR code. Manual entry remains available below it.</Text>
               </View>
             ) : null}
             <Pressable
@@ -215,6 +282,15 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
           </>
         ) : desktopDeviceConnection.supported && !desktopDeviceConnection.paired ? (
           <>
+            <Pressable
+              accessibilityRole="button"
+              disabled={qrPairingBusy || devicePairingBusy}
+              onPress={() => void scanWindowsPairingQr()}
+              style={[styles.desktopButton, (qrPairingBusy || devicePairingBusy) && styles.disabled]}
+            >
+              <Text style={styles.desktopButtonText}>{qrPairingBusy ? 'Scanning…' : 'Scan Windows QR code'}</Text>
+            </Pressable>
+            <Text style={styles.desktopCommand}>Or enter the Windows address and six-digit code manually.</Text>
             <TextInput
               autoCapitalize="none"
               autoCorrect={false}
@@ -241,6 +317,7 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
             >
               <Text style={styles.desktopButtonText}>{devicePairingBusy ? 'Connecting…' : 'Pair and import Windows activity'}</Text>
             </Pressable>
+            {qrPairingError ? <Text style={styles.desktopError}>{qrPairingError}</Text> : null}
             <Text style={styles.desktopCommand}>Generate the code in ATIRA on Windows. Both devices must be on the same private Wi-Fi.</Text>
           </>
         ) : (
@@ -289,16 +366,33 @@ export function YouScreen({ profile, onChangeProfile, collectorStatuses, diagnos
 
       <View style={styles.huaweiCard}>
         <View style={styles.desktopHeader}>
-          <View><Text style={styles.huaweiEyebrow}>HUAWEI HEALTH</Text><Text style={styles.desktopTitle}>Wearable health bridge</Text></View>
+          <View><Text style={styles.huaweiEyebrow}>{Platform.OS === 'ios' ? 'APPLE HEALTHKIT' : 'HUAWEI HEALTH'}</Text><Text style={styles.desktopTitle}>{Platform.OS === 'ios' ? 'Private health timeline' : 'Wearable health bridge'}</Text></View>
           <View style={[styles.desktopState, healthStatus?.state === 'available_full' && styles.desktopStateOn]}><Text style={styles.desktopStateText}>{healthStatus?.state === 'available_full' ? 'SYNCED' : healthStatus?.state === 'available_limited' ? 'CONNECTED' : 'SETUP'}</Text></View>
         </View>
-        <Text style={styles.desktopDetail}>{healthStatus?.detail ?? 'Checking HUAWEI Health connector setup…'}</Text>
+        <Text style={styles.desktopDetail}>{healthStatus?.detail ?? `Checking ${Platform.OS === 'ios' ? 'HealthKit' : 'HUAWEI Health'} setup…`}</Text>
         <View style={styles.desktopPrivacyRow}><Text style={styles.huaweiDataItem}>Sleep</Text><Text style={styles.huaweiDataItem}>Heart rate</Text><Text style={styles.huaweiDataItem}>Steps</Text><Text style={styles.huaweiDataItem}>Workouts</Text></View>
-        <Pressable accessibilityRole="button" disabled={huaweiBusy} onPress={() => void connectHuawei()} style={[styles.huaweiButton, huaweiBusy && styles.disabled]}>
-          <Text style={styles.desktopButtonText}>{huaweiBusy ? 'Opening…' : healthStatus?.state === 'available_full' || healthStatus?.state === 'available_limited' ? 'Sync HUAWEI Health' : 'Connect HUAWEI Health'}</Text>
+        <Pressable
+          accessibilityRole="button"
+          disabled={Platform.OS === 'ios' ? healthKitBusy : huaweiBusy}
+          onPress={() => void (Platform.OS === 'ios' ? connectAppleHealth() : connectHuawei())}
+          style={[styles.huaweiButton, (Platform.OS === 'ios' ? healthKitBusy : huaweiBusy) && styles.disabled]}
+        >
+          <Text style={styles.desktopButtonText}>
+            {Platform.OS === 'ios'
+              ? healthKitBusy
+                ? 'Syncing…'
+                : healthStatus?.state === 'available_full' || healthStatus?.state === 'available_limited'
+                  ? 'Sync Apple Health'
+                  : 'Connect Apple Health'
+              : huaweiBusy
+                ? 'Opening…'
+                : healthStatus?.state === 'available_full' || healthStatus?.state === 'available_limited'
+                  ? 'Sync HUAWEI Health'
+                  : 'Connect HUAWEI Health'}
+          </Text>
         </Pressable>
-        <Text style={styles.desktopCommand}>Workout routes are a separate optional permission—not continuous phone location.</Text>
-        {actionError?.startsWith('HUAWEI Health') ? <Text style={styles.huaweiError}>{actionError}</Text> : null}
+        <Text style={styles.desktopCommand}>{Platform.OS === 'ios' ? 'Read only · bounded seven-day import · nothing is written to Apple Health.' : 'Workout routes are a separate optional permission—not continuous phone location.'}</Text>
+        {actionError?.startsWith(Platform.OS === 'ios' ? 'HealthKit' : 'HUAWEI Health') ? <Text style={styles.huaweiError}>{actionError}</Text> : null}
       </View>
 
       <View style={styles.statusList}>
@@ -620,6 +714,7 @@ const styles = StyleSheet.create({
   disconnectButtonText: { color: colours.inkSoft, fontSize: 9, fontWeight: '800' },
   browserCodeBox: { backgroundColor: colours.surfaceMuted, borderRadius: 13, padding: 13, alignItems: 'center', marginTop: 13 },
   browserCodeLabel: { color: colours.inkSoft, fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  devicePairingQr: { width: 220, height: 220, borderRadius: 12, marginTop: 12 },
   browserCode: { color: colours.ink, fontSize: 25, fontWeight: '900', letterSpacing: 6, marginTop: 6 },
   desktopError: { color: '#A1432C', fontSize: 9, lineHeight: 14, marginTop: 8 },
   deviceManagementCard: { backgroundColor: colours.surface, borderRadius: radius.large, padding: 18, marginTop: 13, borderWidth: 1, borderColor: colours.line },

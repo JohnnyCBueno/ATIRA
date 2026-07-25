@@ -5,6 +5,11 @@ import { syntheticMultiDayLocationTrace } from '../fixtures/syntheticLocationTra
 import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
 import { enrichStoredApplePlaceCandidates } from '../collectors/applePlaceCandidateProvider';
+import {
+  connectOrSyncHealthKit,
+  inspectHealthKitCollector,
+  syncHealthKitObservations,
+} from '../collectors/healthKitCollector';
 import { assessCollectorHealth } from '../collectors/collectorHealth';
 import {
   BrowserIntegrationStatus,
@@ -123,7 +128,19 @@ export function useTimelineStore() {
       }
       await reconstructStoredDesktopDays(repository);
       await ensureCurrentDay(repository);
-      await repository.upsertCollectorStatus(await inspectHuaweiHealthConnector());
+      if (Platform.OS === 'ios') {
+        const healthKitStatus = await inspectHealthKitCollector();
+        await repository.upsertCollectorStatus(healthKitStatus);
+        if (healthKitStatus.state === 'available_limited') {
+          try {
+            await syncHealthKitObservations(repository);
+          } catch {
+            // Existing health history remains available when HealthKit is temporarily unreadable.
+          }
+        }
+      } else {
+        await repository.upsertCollectorStatus(await inspectHuaweiHealthConnector());
+      }
       setDesktopControl(await inspectDesktopCollectionControl());
       setBrowserIntegration(await inspectBrowserIntegration());
       setDesktopDeviceConnection(await inspectDesktopMobileDevice());
@@ -283,6 +300,18 @@ export function useTimelineStore() {
     }
   }, [refresh, repository]);
 
+  const connectHealthKit = useCallback(async () => {
+    setActionError(null);
+    try {
+      await connectOrSyncHealthKit(repository);
+      await refresh();
+    } catch (cause) {
+      const message = cause instanceof Error ? `HealthKit: ${cause.message}` : 'HealthKit could not be connected.';
+      setActionError(message);
+      throw cause;
+    }
+  }, [refresh, repository]);
+
   const updateDeviceLabel = useCallback(async (deviceId: string, label: string) => {
     const current = devices.find((device) => device.id === deviceId);
     const trimmed = label.trim();
@@ -414,6 +443,7 @@ export function useTimelineStore() {
     enableBackgroundLocation,
     syncDesktopActivity,
     connectHuaweiHealth,
+    connectHealthKit,
     runSyntheticReconstruction,
     updateDeviceLabel,
     upsertDigitalActivityRule,
