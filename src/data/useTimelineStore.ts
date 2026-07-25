@@ -4,6 +4,7 @@ import { DayRecord, DigitalActivityRule, TimelineEvent } from '../domain/types';
 import { syntheticMultiDayLocationTrace } from '../fixtures/syntheticLocationTrace';
 import { clusterKnownPlaces, KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { captureCurrentLocation, inspectLocationCollector, startBackgroundLocation } from '../collectors/locationCollector';
+import { enrichStoredApplePlaceCandidates } from '../collectors/applePlaceCandidateProvider';
 import { assessCollectorHealth } from '../collectors/collectorHealth';
 import {
   BrowserIntegrationStatus,
@@ -27,7 +28,16 @@ import {
 import { locationDayResultToRecord } from '../reconstruction/locationDayPresentation';
 import { LocationReconstructionResult, reconstructLocationDay } from '../reconstruction/locationEngine';
 import { desktopDayResultsToRecord, reconstructDesktopActivity, withoutDesktopDerivedData } from '../reconstruction/desktopActivityEngine';
-import { CollectorStatus, DeviceRecord, EventCorrection, LocationSegmentRecord, RawObservation, RepositoryDiagnostics, TimelineRepository } from './contracts';
+import {
+  CollectorStatus,
+  DeviceRecord,
+  EventCorrection,
+  LocationSegmentRecord,
+  PlaceCandidateSetRecord,
+  RawObservation,
+  RepositoryDiagnostics,
+  TimelineRepository,
+} from './contracts';
 import { databaseStartupMessage } from './databaseReliability';
 import { ensureCurrentDay } from './currentDay';
 import { localDayIdForTimestamp } from './localDay';
@@ -50,6 +60,7 @@ export function useTimelineStore() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [lastReconstruction, setLastReconstruction] = useState<LocationReconstructionResult | null>(null);
   const [locationSegments, setLocationSegments] = useState<LocationSegmentRecord[]>([]);
+  const [placeCandidateSets, setPlaceCandidateSets] = useState<PlaceCandidateSetRecord[]>([]);
   const [knownPlaceClustering, setKnownPlaceClustering] = useState<KnownPlaceClusteringResult>({ places: [], assignments: [] });
   const [observations, setObservations] = useState<RawObservation[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
@@ -63,11 +74,12 @@ export function useTimelineStore() {
 
   const refresh = useCallback(async () => {
     await ensureCurrentDay(repository);
-    const [storedDays, statuses, repositoryDiagnostics, storedSegments, storedObservations, storedDevices, storedRules] = await Promise.all([
+    const [storedDays, statuses, repositoryDiagnostics, storedSegments, storedPlaceCandidateSets, storedObservations, storedDevices, storedRules] = await Promise.all([
       repository.listDays(),
       repository.listCollectorStatuses(),
       repository.getDiagnostics(),
       repository.listLocationSegments(),
+      repository.listPlaceCandidateSets(),
       repository.listObservations(),
       repository.listDevices(),
       repository.listDigitalActivityRules(),
@@ -76,6 +88,7 @@ export function useTimelineStore() {
     setCollectorStatuses(statuses);
     setDiagnostics(repositoryDiagnostics);
     setLocationSegments(storedSegments);
+    setPlaceCandidateSets(storedPlaceCandidateSets);
     setKnownPlaceClustering(clusterKnownPlaces(storedSegments));
     setObservations(storedObservations);
     setDevices(storedDevices);
@@ -88,6 +101,7 @@ export function useTimelineStore() {
     try {
       await repository.initialize([]);
       await reconstructStoredLocationDays(repository);
+      await enrichStoredApplePlaceCandidates(repository);
       try {
         await repository.upsertCollectorStatus(await inspectLocationCollector());
       } catch {
@@ -132,6 +146,7 @@ export function useTimelineStore() {
       foregroundRefreshInFlight.current = true;
       void (async () => {
         await reconstructStoredLocationDays(repository);
+        await enrichStoredApplePlaceCandidates(repository);
         await repository.upsertCollectorStatus(await inspectLocationCollector());
         await refresh();
       })().catch(() => {
@@ -206,6 +221,7 @@ export function useTimelineStore() {
     try {
       await captureCurrentLocation(repository);
       await reconstructStoredLocationDays(repository);
+      await enrichStoredApplePlaceCandidates(repository);
       await refresh();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'ATIRA could not capture a location sample.';
@@ -356,6 +372,23 @@ export function useTimelineStore() {
     setDesktopDeviceConnection(await disconnectDesktopMobileDevice());
   }, []);
 
+  const confirmPlaceCandidate = useCallback(async (segmentId: string, candidateId?: string) => {
+    const candidateSet = placeCandidateSets.find((item) => item.segmentId === segmentId);
+    if (!candidateSet) return;
+    if (candidateId && !candidateSet.candidates.some((candidate) => candidate.id === candidateId)) return;
+    const timestamp = new Date().toISOString();
+    const updated: PlaceCandidateSetRecord = {
+      ...candidateSet,
+      decision: candidateId
+        ? { kind: 'candidate', candidateId, createdAt: timestamp }
+        : { kind: 'somewhere_else', createdAt: timestamp },
+      updatedAt: timestamp,
+    };
+    await repository.upsertPlaceCandidateSet(updated);
+    setPlaceCandidateSets((current) => current.map((item) => item.segmentId === segmentId ? updated : item));
+    setDiagnostics(await repository.getDiagnostics());
+  }, [placeCandidateSets, repository]);
+
   return {
     days,
     collectorStatuses,
@@ -366,6 +399,7 @@ export function useTimelineStore() {
     actionError,
     lastReconstruction,
     locationSegments,
+    placeCandidateSets,
     knownPlaceClustering,
     observations,
     devices,
@@ -391,6 +425,7 @@ export function useTimelineStore() {
     requestDesktopDevicePairingCode,
     pairDesktopMobile,
     disconnectDesktopMobile,
+    confirmPlaceCandidate,
   };
 }
 

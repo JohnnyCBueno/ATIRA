@@ -3,7 +3,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DayRouteMap } from '../components/DayRouteMap';
 import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
 import { TimelineEventCard } from '../components/TimelineEventCard';
-import { LocationSegmentRecord, ObservationOrigin } from '../data/contracts';
+import {
+  LocationSegmentRecord,
+  ObservationOrigin,
+  PlaceCandidateSetRecord,
+} from '../data/contracts';
 import { DayPlace, DayRecord, DesktopUsageSummary, DigitalActivityCategory, TimelineEvent } from '../domain/types';
 import { KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
@@ -25,9 +29,11 @@ interface Props {
   days: DayRecord[];
   selectedDay: DayRecord;
   locationSegments: LocationSegmentRecord[];
+  placeCandidateSets: PlaceCandidateSetRecord[];
   knownPlaceClustering: KnownPlaceClusteringResult;
   onSelectDay: (dayId: string) => void;
   onOpenEvent: (event: TimelineEvent) => void;
+  onConfirmPlaceCandidate: (segmentId: string, candidateId?: string) => Promise<void>;
 }
 
 function PeriodPicker({ value, onChange }: { value: PeriodScale; onChange: (value: PeriodScale) => void }) {
@@ -58,6 +64,8 @@ function DayView({
   selectedSegmentId,
   onSelectSegment,
   onOpenEvent,
+  placeCandidateSets,
+  onConfirmPlaceCandidate,
 }: {
   day: DayRecord;
   segments: LocationSegmentRecord[];
@@ -65,6 +73,8 @@ function DayView({
   selectedSegmentId: string | null;
   onSelectSegment: (segmentId: string | null) => void;
   onOpenEvent: (event: TimelineEvent) => void;
+  placeCandidateSets: PlaceCandidateSetRecord[];
+  onConfirmPlaceCandidate: (segmentId: string, candidateId?: string) => Promise<void>;
 }) {
   const desktopUsages = day.desktopUsages ?? [];
   const applicationCount = desktopUsages.reduce(
@@ -118,6 +128,8 @@ function DayView({
           knownPlaceClustering={knownPlaceClustering}
           selectedSegmentId={selectedSegmentId}
           onSelectSegment={onSelectSegment}
+          placeCandidateSets={placeCandidateSets}
+          onConfirmPlaceCandidate={onConfirmPlaceCandidate}
         />
       ) : null}
 
@@ -178,11 +190,15 @@ function LocationSegmentTimeline({
   knownPlaceClustering,
   selectedSegmentId,
   onSelectSegment,
+  placeCandidateSets,
+  onConfirmPlaceCandidate,
 }: {
   segments: LocationSegmentRecord[];
   knownPlaceClustering: KnownPlaceClusteringResult;
   selectedSegmentId: string | null;
   onSelectSegment: (segmentId: string | null) => void;
+  placeCandidateSets: PlaceCandidateSetRecord[];
+  onConfirmPlaceCandidate: (segmentId: string, candidateId?: string) => Promise<void>;
 }) {
   const assignmentBySegment = new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId]));
   const placeById = new Map(knownPlaceClustering.places.map((place) => [place.id, place]));
@@ -195,21 +211,82 @@ function LocationSegmentTimeline({
       {segments.map((segment, index) => {
         const place = placeById.get(assignmentBySegment.get(segment.id) ?? '');
         const selected = segment.id === selectedSegmentId;
+        const candidateSet = placeCandidateSets.find((item) => item.segmentId === segment.id);
         return (
-          <Pressable
-            key={segment.id}
-            accessibilityRole="button"
-            accessibilityState={{ selected }}
-            onPress={() => onSelectSegment(selected ? null : segment.id)}
-            style={[styles.locationSegmentRow, selected && styles.locationSegmentRowSelected, index === segments.length - 1 && styles.locationSegmentRowLast]}
-          >
-            <View style={[styles.locationSegmentMark, segment.kind === 'coverage_gap' && styles.locationSegmentMarkGap]} />
-            <View style={styles.locationSegmentTime}><Text style={styles.locationSegmentTimeText}>{formatClock(segment.startedAt)}</Text><Text style={styles.locationSegmentTimeEnd}>{formatClock(segment.endedAt)}</Text></View>
-            <View style={styles.locationSegmentCopy}><Text style={styles.locationSegmentTitle}>{locationSegmentTitle(segment, place?.label)}</Text><Text style={styles.locationSegmentDetail}>{locationSegmentDetail(segment)}</Text></View>
-            <Text style={styles.locationSegmentConfidence}>{Math.round(segment.confidence * 100)}%</Text>
-          </Pressable>
+          <View key={segment.id}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => onSelectSegment(selected ? null : segment.id)}
+              style={[styles.locationSegmentRow, selected && styles.locationSegmentRowSelected, index === segments.length - 1 && !selected && styles.locationSegmentRowLast]}
+            >
+              <View style={[styles.locationSegmentMark, segment.kind === 'coverage_gap' && styles.locationSegmentMarkGap]} />
+              <View style={styles.locationSegmentTime}><Text style={styles.locationSegmentTimeText}>{formatClock(segment.startedAt)}</Text><Text style={styles.locationSegmentTimeEnd}>{formatClock(segment.endedAt)}</Text></View>
+              <View style={styles.locationSegmentCopy}><Text style={styles.locationSegmentTitle}>{locationSegmentTitle(segment, place?.label)}</Text><Text style={styles.locationSegmentDetail}>{locationSegmentDetail(segment)}</Text></View>
+              <Text style={styles.locationSegmentConfidence}>{Math.round(segment.confidence * 100)}%</Text>
+            </Pressable>
+            {selected && candidateSet ? (
+              <PlaceCandidateCard
+                candidateSet={candidateSet}
+                onConfirm={(candidateId) => onConfirmPlaceCandidate(segment.id, candidateId)}
+              />
+            ) : null}
+          </View>
         );
       })}
+    </View>
+  );
+}
+
+function PlaceCandidateCard({
+  candidateSet,
+  onConfirm,
+}: {
+  candidateSet: PlaceCandidateSetRecord;
+  onConfirm: (candidateId?: string) => Promise<void>;
+}) {
+  const confirmed = candidateSet.decision?.kind === 'candidate'
+    ? candidateSet.candidates.find((candidate) => candidate.id === candidateSet.decision?.candidateId)
+    : undefined;
+  return (
+    <View style={styles.placeCandidateCard}>
+      <Text style={styles.placeCandidateKicker}>APPLE MAPS POSSIBILITIES</Text>
+      {confirmed ? (
+        <Text style={styles.placeCandidateDecision}>Confirmed by you: {confirmed.name}</Text>
+      ) : candidateSet.decision?.kind === 'somewhere_else' ? (
+        <Text style={styles.placeCandidateDecision}>You marked this as somewhere else.</Text>
+      ) : (
+        <Text style={styles.placeCandidateIntro}>These are nearby candidates, not a claim about where you went.</Text>
+      )}
+      {candidateSet.candidates.slice(0, 4).map((candidate) => (
+        <Pressable
+          key={candidate.id}
+          accessibilityRole="button"
+          accessibilityLabel={`Confirm ${candidate.name}`}
+          onPress={() => void onConfirm(candidate.id)}
+          style={[
+            styles.placeCandidateRow,
+            candidate.id === candidateSet.decision?.candidateId && styles.placeCandidateRowConfirmed,
+          ]}
+        >
+          <View style={styles.placeCandidateCopy}>
+            <Text style={styles.placeCandidateName}>{candidate.name}</Text>
+            <Text style={styles.placeCandidateMeta}>
+              {candidate.distanceMetres} m away · {labelPlaceCategory(candidate.category)}
+              {candidate.street ? ` · ${candidate.street}` : ''}
+            </Text>
+          </View>
+          <Text style={styles.placeCandidateAction}>
+            {candidate.id === candidateSet.decision?.candidateId ? 'CONFIRMED' : 'THAT WAS ME'}
+          </Text>
+        </Pressable>
+      ))}
+      {candidateSet.candidates.length === 0 ? (
+        <Text style={styles.placeCandidateIntro}>Apple Maps did not return a named place within 180 metres.</Text>
+      ) : null}
+      <Pressable accessibilityRole="button" onPress={() => void onConfirm()} style={styles.somewhereElseButton}>
+        <Text style={styles.somewhereElseText}>Somewhere else / none of these</Text>
+      </Pressable>
     </View>
   );
 }
@@ -298,7 +375,16 @@ function MonthView({ days, selectedDay }: { days: DayRecord[]; selectedDay: DayR
   );
 }
 
-export function TimelineScreen({ days, selectedDay, locationSegments = [], knownPlaceClustering = emptyKnownPlaceClustering, onSelectDay, onOpenEvent }: Props) {
+export function TimelineScreen({
+  days,
+  selectedDay,
+  locationSegments = [],
+  placeCandidateSets = [],
+  knownPlaceClustering = emptyKnownPlaceClustering,
+  onSelectDay,
+  onOpenEvent,
+  onConfirmPlaceCandidate,
+}: Props) {
   const [period, setPeriod] = useState<PeriodScale>('day');
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const visibleDayIds = useMemo(
@@ -363,6 +449,8 @@ export function TimelineScreen({ days, selectedDay, locationSegments = [], known
           selectedSegmentId={selectedSegmentId}
           onSelectSegment={setSelectedSegmentId}
           onOpenEvent={onOpenEvent}
+          placeCandidateSets={placeCandidateSets}
+          onConfirmPlaceCandidate={onConfirmPlaceCandidate}
         />
       ) : null}
       {period === 'week' ? <WeekView days={days} selectedDay={selectedDay} onSelectDay={onSelectDay} onSwitchToDay={() => setPeriod('day')} /> : null}
@@ -434,6 +522,10 @@ function labelCategory(category: DigitalActivityCategory) {
   return category.replace('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 }
 
+function labelPlaceCategory(category: PlaceCandidateSetRecord['candidates'][number]['category']) {
+  return category === 'other' ? 'place' : category;
+}
+
 const styles = StyleSheet.create({
   content: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 112 },
   devicePicker: { gap: 8, paddingTop: 20, paddingBottom: 2 },
@@ -483,6 +575,18 @@ const styles = StyleSheet.create({
   locationSegmentTitle: { color: colours.ink, fontSize: 10, fontWeight: '900' },
   locationSegmentDetail: { color: colours.inkSoft, fontSize: 8, lineHeight: 12, marginTop: 3 },
   locationSegmentConfidence: { color: colours.inkSoft, fontSize: 8, fontWeight: '900' },
+  placeCandidateCard: { backgroundColor: colours.blueSoft, borderRadius: 13, padding: 12, marginBottom: 10 },
+  placeCandidateKicker: { color: colours.blue, fontSize: 7, fontWeight: '900', letterSpacing: 0.7 },
+  placeCandidateIntro: { color: colours.inkSoft, fontSize: 9, lineHeight: 14, marginTop: 4, marginBottom: 7 },
+  placeCandidateDecision: { color: colours.moss, fontSize: 10, fontWeight: '900', marginTop: 5, marginBottom: 7 },
+  placeCandidateRow: { minHeight: 46, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#D8E2EA', paddingVertical: 8 },
+  placeCandidateRowConfirmed: { backgroundColor: colours.mossSoft, marginHorizontal: -6, paddingHorizontal: 6, borderRadius: 9 },
+  placeCandidateCopy: { flex: 1, paddingRight: 8 },
+  placeCandidateName: { color: colours.ink, fontSize: 10, fontWeight: '900' },
+  placeCandidateMeta: { color: colours.inkSoft, fontSize: 8, marginTop: 2 },
+  placeCandidateAction: { color: colours.blue, fontSize: 7, fontWeight: '900' },
+  somewhereElseButton: { alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 8 },
+  somewhereElseText: { color: colours.inkSoft, fontSize: 8, fontWeight: '800', textDecorationLine: 'underline' },
   daySummary: { backgroundColor: colours.ink, borderRadius: radius.large, padding: 16, flexDirection: 'row', alignItems: 'center' },
   coverageBlock: { width: 72 },
   coverageValue: { color: colours.white, fontSize: 20, fontWeight: '900' },

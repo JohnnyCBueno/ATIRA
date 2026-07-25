@@ -8,6 +8,7 @@ import {
   initialCollectorStatuses,
   LocationSegmentRecord,
   ObservationQuery,
+  PlaceCandidateSetRecord,
   RawObservation,
   RepositoryDiagnostics,
   TimelineRepository,
@@ -25,6 +26,7 @@ interface WebState {
   devices: DeviceRecord[];
   collectors: CollectorRecord[];
   activityRules: DigitalActivityRule[];
+  placeCandidateSets: PlaceCandidateSetRecord[];
 }
 
 let memoryState: WebState | null = null;
@@ -86,6 +88,7 @@ class WebTimelineRepository implements TimelineRepository {
         devices: existing.devices ?? legacyDevices(migratedObservations),
         collectors: existing.collectors ?? legacyCollectors(migratedObservations),
         activityRules: existing.activityRules ?? [],
+        placeCandidateSets: existing.placeCandidateSets ?? [],
       });
       if (legacyBrowserState && typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_KEY);
       return;
@@ -103,6 +106,7 @@ class WebTimelineRepository implements TimelineRepository {
       devices: [],
       collectors: [],
       activityRules: [],
+      placeCandidateSets: [],
     });
   }
 
@@ -273,6 +277,23 @@ class WebTimelineRepository implements TimelineRepository {
     return clone(segments.filter((item) => !dayId || item.dayId === dayId).sort((a, b) => a.startedAt.localeCompare(b.startedAt)));
   }
 
+  async listPlaceCandidateSets(dayId?: string) {
+    const candidateSets = (await readState())?.placeCandidateSets ?? [];
+    return clone(candidateSets
+      .filter((item) => !dayId || item.dayId === dayId)
+      .sort((left, right) => left.searchedAt.localeCompare(right.searchedAt)));
+  }
+
+  async upsertPlaceCandidateSet(candidateSet: PlaceCandidateSetRecord) {
+    const state = await readState();
+    if (!state) throw new Error('Repository has not been initialized.');
+    state.placeCandidateSets ??= [];
+    const index = state.placeCandidateSets.findIndex((item) => item.segmentId === candidateSet.segmentId);
+    if (index >= 0) state.placeCandidateSets[index] = clone(candidateSet);
+    else state.placeCandidateSets.push(clone(candidateSet));
+    await writeState(state);
+  }
+
   async listCollectorStatuses() {
     return clone((await readState())?.collectorStatuses ?? []);
   }
@@ -298,6 +319,7 @@ class WebTimelineRepository implements TimelineRepository {
       deviceCount: state?.devices?.length ?? 0,
       collectorCount: state?.collectors?.length ?? 0,
       activityRuleCount: state?.activityRules?.length ?? 0,
+      placeCandidateSetCount: state?.placeCandidateSets?.length ?? 0,
     };
   }
 }

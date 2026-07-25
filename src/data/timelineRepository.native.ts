@@ -11,6 +11,7 @@ import {
   LocationSegmentRecord,
   ObservationQuery,
   ObservationKind,
+  PlaceCandidateSetRecord,
   RawObservation,
   TimelineRepository,
 } from './contracts';
@@ -111,6 +112,10 @@ interface SegmentRow {
 }
 
 interface ActivityRuleRow {
+  payload_json: string;
+}
+
+interface PlaceCandidateSetRow {
   payload_json: string;
 }
 
@@ -348,6 +353,23 @@ async function migrate(database: SQLite.SQLiteDatabase) {
     await ensureColumn(database, 'collector_status', 'expected_heartbeat_seconds', 'INTEGER');
     await ensureColumn(database, 'collector_status', 'backfill_state', 'TEXT');
     currentVersion = 7;
+  }
+
+  if (currentVersion === 7) {
+    await database.execAsync(`
+      CREATE TABLE IF NOT EXISTS place_candidate_sets (
+        id TEXT PRIMARY KEY NOT NULL,
+        segment_id TEXT NOT NULL,
+        day_id TEXT NOT NULL,
+        searched_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS place_candidate_sets_segment ON place_candidate_sets(segment_id);
+      CREATE INDEX IF NOT EXISTS place_candidate_sets_day_time ON place_candidate_sets(day_id, searched_at);
+    `);
+    currentVersion = 8;
   }
 
   await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
@@ -822,6 +844,40 @@ class NativeTimelineRepository implements TimelineRepository {
     return rows.map((row) => JSON.parse(row.payload_json) as LocationSegmentRecord);
   }
 
+  async listPlaceCandidateSets(dayId?: string): Promise<PlaceCandidateSetRecord[]> {
+    const database = await getDatabase();
+    const rows = dayId
+      ? await database.getAllAsync<PlaceCandidateSetRow>(
+        'SELECT payload_json FROM place_candidate_sets WHERE day_id = ? ORDER BY searched_at',
+        dayId,
+      )
+      : await database.getAllAsync<PlaceCandidateSetRow>(
+        'SELECT payload_json FROM place_candidate_sets ORDER BY searched_at',
+      );
+    return rows.map((row) => JSON.parse(row.payload_json) as PlaceCandidateSetRecord);
+  }
+
+  async upsertPlaceCandidateSet(candidateSet: PlaceCandidateSetRecord) {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT INTO place_candidate_sets
+        (id, segment_id, day_id, searched_at, payload_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(segment_id) DO UPDATE SET
+          id = excluded.id,
+          day_id = excluded.day_id,
+          searched_at = excluded.searched_at,
+          payload_json = excluded.payload_json,
+          updated_at = excluded.updated_at`,
+      candidateSet.id,
+      candidateSet.segmentId,
+      candidateSet.dayId,
+      candidateSet.searchedAt,
+      JSON.stringify(candidateSet),
+      candidateSet.updatedAt,
+    );
+  }
+
   async listCollectorStatuses(): Promise<CollectorStatus[]> {
     const database = await getDatabase();
     const rows = await database.getAllAsync<CollectorRow>('SELECT * FROM collector_status ORDER BY source');
@@ -869,7 +925,7 @@ class NativeTimelineRepository implements TimelineRepository {
 
   async getDiagnostics() {
     const database = await getDatabase();
-    const [dayRow, observationRow, correctionRow, segmentRow, deviceRow, collectorRow, activityRuleRow] = await Promise.all([
+    const [dayRow, observationRow, correctionRow, segmentRow, deviceRow, collectorRow, activityRuleRow, placeCandidateSetRow] = await Promise.all([
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM day_records'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM raw_observations'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM event_corrections'),
@@ -877,6 +933,7 @@ class NativeTimelineRepository implements TimelineRepository {
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM devices'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM registered_collectors'),
       database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM digital_activity_rules'),
+      database.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM place_candidate_sets'),
     ]);
     return {
       adapter: 'sqlite' as const,
@@ -888,6 +945,7 @@ class NativeTimelineRepository implements TimelineRepository {
       deviceCount: deviceRow?.count ?? 0,
       collectorCount: collectorRow?.count ?? 0,
       activityRuleCount: activityRuleRow?.count ?? 0,
+      placeCandidateSetCount: placeCandidateSetRow?.count ?? 0,
     };
   }
 }

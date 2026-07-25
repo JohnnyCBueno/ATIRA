@@ -59,6 +59,49 @@ export interface LocationSegmentRecord {
   points: SegmentPoint[];
 }
 
+export type SemanticPlaceCategory =
+  | 'fitness'
+  | 'food'
+  | 'work'
+  | 'retail'
+  | 'healthcare'
+  | 'education'
+  | 'transit'
+  | 'recreation'
+  | 'accommodation'
+  | 'other';
+
+export interface ApplePlaceCandidate {
+  id: string;
+  provider: 'apple_mapkit';
+  name: string;
+  category: SemanticPlaceCategory;
+  providerCategory?: string;
+  latitude: number;
+  longitude: number;
+  distanceMetres: number;
+  street?: string;
+  locality?: string;
+}
+
+export interface PlaceCandidateDecision {
+  kind: 'candidate' | 'somewhere_else';
+  candidateId?: string;
+  createdAt: string;
+}
+
+export interface PlaceCandidateSetRecord {
+  id: string;
+  segmentId: string;
+  dayId: string;
+  provider: 'apple_mapkit';
+  searchRadiusMetres: number;
+  searchedAt: string;
+  candidates: ApplePlaceCandidate[];
+  decision?: PlaceCandidateDecision;
+  updatedAt: string;
+}
+
 export interface ObservationQuery {
   source?: EvidenceSource;
   deviceId?: string;
@@ -126,6 +169,7 @@ export interface RepositoryDiagnostics {
   deviceCount: number;
   collectorCount: number;
   activityRuleCount: number;
+  placeCandidateSetCount: number;
 }
 
 export interface TimelineRepository {
@@ -146,12 +190,14 @@ export interface TimelineRepository {
   upsertCollector(collector: CollectorRecord): Promise<void>;
   replaceLocationSegments(dayId: string, segments: LocationSegmentRecord[]): Promise<void>;
   listLocationSegments(dayId?: string): Promise<LocationSegmentRecord[]>;
+  listPlaceCandidateSets(dayId?: string): Promise<PlaceCandidateSetRecord[]>;
+  upsertPlaceCandidateSet(candidateSet: PlaceCandidateSetRecord): Promise<void>;
   listCollectorStatuses(): Promise<CollectorStatus[]>;
   upsertCollectorStatus(status: CollectorStatus): Promise<void>;
   getDiagnostics(): Promise<RepositoryDiagnostics>;
 }
 
-export const DATABASE_SCHEMA_VERSION = 7;
+export const DATABASE_SCHEMA_VERSION = 8;
 
 export const initialCollectorStatuses: CollectorStatus[] = [
   {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CollectorRecord, DeviceRecord, RawObservation } from './contracts';
+import { CollectorRecord, DeviceRecord, PlaceCandidateSetRecord, RawObservation } from './contracts';
 import { getTimelineRepository } from './timelineRepository.web';
 
 describe('local Windows identity reconciliation', () => {
@@ -37,6 +37,63 @@ describe('local Windows identity reconciliation', () => {
     expect(await repository.listDigitalActivityRules()).toEqual([
       expect.objectContaining({ id: `${current.id}:chatgpt`, deviceId: current.id, applicationId: 'chatgpt', purpose: 'work' }),
     ]);
+  });
+
+  it('preserves multiple Apple place candidates and a later user decision', async () => {
+    const repository = getTimelineRepository();
+    await repository.initialize([]);
+    const searchedAt = '2026-07-25T18:02:00.000Z';
+    const candidateSet: PlaceCandidateSetRecord = {
+      id: 'place-candidates:stay-1',
+      segmentId: 'stay-1',
+      dayId: '2026-07-25',
+      provider: 'apple_mapkit',
+      searchRadiusMetres: 180,
+      searchedAt,
+      candidates: [
+        {
+          id: 'apple:gym',
+          provider: 'apple_mapkit',
+          name: 'Neighbourhood Gym',
+          category: 'fitness',
+          latitude: 51.5,
+          longitude: -0.12,
+          distanceMetres: 18,
+        },
+        {
+          id: 'apple:restaurant',
+          provider: 'apple_mapkit',
+          name: 'Nearby Restaurant',
+          category: 'food',
+          latitude: 51.5001,
+          longitude: -0.1201,
+          distanceMetres: 24,
+        },
+      ],
+      updatedAt: searchedAt,
+    };
+    await repository.upsertPlaceCandidateSet(candidateSet);
+    await repository.upsertPlaceCandidateSet({
+      ...candidateSet,
+      decision: {
+        kind: 'candidate',
+        candidateId: 'apple:gym',
+        createdAt: '2026-07-25T18:04:00.000Z',
+      },
+      updatedAt: '2026-07-25T18:04:00.000Z',
+    });
+
+    const stored = await repository.listPlaceCandidateSets('2026-07-25');
+    expect(stored).toHaveLength(1);
+    expect(stored[0].candidates.map((candidate) => candidate.name)).toEqual([
+      'Neighbourhood Gym',
+      'Nearby Restaurant',
+    ]);
+    expect(stored[0].decision).toEqual(expect.objectContaining({
+      kind: 'candidate',
+      candidateId: 'apple:gym',
+    }));
+    expect((await repository.getDiagnostics()).placeCandidateSetCount).toBeGreaterThanOrEqual(1);
   });
 });
 
