@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DayRouteMap } from '../components/DayRouteMap';
 import { DesktopUsagePanel } from '../components/DesktopUsagePanel';
@@ -8,9 +8,14 @@ import { DayPlace, DayRecord, DesktopUsageSummary, DigitalActivityCategory, Time
 import { KnownPlaceClusteringResult } from '../reconstruction/knownPlaceEngine';
 import { groupApplicationsForDisplay } from '../reconstruction/digitalActivityPresentation';
 import { formatClock, locationSegmentDetail, locationSegmentTitle } from '../reconstruction/locationSegmentPresentation';
+import {
+  dayIdsForTimelinePeriod,
+  isLiveTimelinePeriod,
+  TimelinePeriod,
+} from '../reconstruction/timelinePeriod';
 import { colours, radius, shadow } from '../theme';
 
-type PeriodScale = 'day' | 'week' | 'month';
+type PeriodScale = TimelinePeriod;
 
 const placeColour: Record<DayPlace['kind'], string> = {
   home: '#6B6789', work: colours.moss, food: colours.coral, exercise: '#A45E42', other: colours.blue,
@@ -46,8 +51,21 @@ function PeriodPicker({ value, onChange }: { value: PeriodScale; onChange: (valu
 const clusterColours = ['#6B6789', colours.moss, colours.coral, '#A45E42', colours.blue];
 const emptyKnownPlaceClustering: KnownPlaceClusteringResult = { places: [], assignments: [] };
 
-function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: DayRecord; segments: LocationSegmentRecord[]; knownPlaceClustering: KnownPlaceClusteringResult; onOpenEvent: (event: TimelineEvent) => void }) {
-  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+function DayView({
+  day,
+  segments,
+  knownPlaceClustering,
+  selectedSegmentId,
+  onSelectSegment,
+  onOpenEvent,
+}: {
+  day: DayRecord;
+  segments: LocationSegmentRecord[];
+  knownPlaceClustering: KnownPlaceClusteringResult;
+  selectedSegmentId: string | null;
+  onSelectSegment: (segmentId: string | null) => void;
+  onOpenEvent: (event: TimelineEvent) => void;
+}) {
   const desktopUsages = day.desktopUsages ?? [];
   const applicationCount = desktopUsages.reduce(
     (total, usage) => total + groupApplicationsForDisplay(usage.applications).length,
@@ -64,16 +82,8 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
     .filter((id): id is string => id != null))]
     .map((id) => placeById.get(id))
     .filter((place): place is NonNullable<typeof place> => place != null);
-  useEffect(() => setSelectedSegmentId(null), [day.id]);
   return (
     <>
-      <DayRouteMap
-        day={day}
-        segments={segments}
-        knownPlaceClustering={knownPlaceClustering}
-        selectedSegmentId={selectedSegmentId}
-        onSelectSegment={setSelectedSegmentId}
-      />
       {day.places.length > 0 || reconstructedPlaces.length > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.placeChips}>
         {reconstructedPlaces.length > 0 ? reconstructedPlaces.map((place) => (
           <View key={place.id} style={styles.placeChip}>
@@ -107,7 +117,7 @@ function DayView({ day, segments, knownPlaceClustering, onOpenEvent }: { day: Da
           segments={segments}
           knownPlaceClustering={knownPlaceClustering}
           selectedSegmentId={selectedSegmentId}
-          onSelectSegment={setSelectedSegmentId}
+          onSelectSegment={onSelectSegment}
         />
       ) : null}
 
@@ -205,13 +215,11 @@ function LocationSegmentTimeline({
 }
 
 function WeekView({ days, selectedDay, onSelectDay, onSwitchToDay }: { days: DayRecord[]; selectedDay: DayRecord; onSelectDay: (id: string) => void; onSwitchToDay: () => void }) {
-  const selectedDate = parseDayId(selectedDay.id);
-  const slots = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(selectedDate);
-    date.setDate(date.getDate() - (6 - index));
-    const id = localDateId(date);
-    return { id, date, day: days.find((item) => item.id === id) };
-  });
+  const slots = dayIdsForTimelinePeriod('week', selectedDay.id).map((id) => ({
+    id,
+    date: parseDayId(id),
+    day: days.find((item) => item.id === id),
+  }));
   const observed = slots.filter((slot) => desktopSeconds(slot.day) > 0);
   const totalSeconds = observed.reduce((total, slot) => total + desktopSeconds(slot.day), 0);
   const totals = aggregateCategories(observed.flatMap((slot) => slot.day?.desktopUsages ?? []));
@@ -292,7 +300,22 @@ function MonthView({ days, selectedDay }: { days: DayRecord[]; selectedDay: DayR
 
 export function TimelineScreen({ days, selectedDay, locationSegments = [], knownPlaceClustering = emptyKnownPlaceClustering, onSelectDay, onOpenEvent }: Props) {
   const [period, setPeriod] = useState<PeriodScale>('day');
-  const selectedSegments = locationSegments.filter((segment) => segment.dayId === selectedDay.id);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const visibleDayIds = useMemo(
+    () => new Set(dayIdsForTimelinePeriod(period, selectedDay.id)),
+    [period, selectedDay.id],
+  );
+  const visibleSegments = useMemo(
+    () => locationSegments.filter((segment) => visibleDayIds.has(segment.dayId)),
+    [locationSegments, visibleDayIds],
+  );
+  const selectedSegments = useMemo(
+    () => locationSegments.filter((segment) => segment.dayId === selectedDay.id),
+    [locationSegments, selectedDay.id],
+  );
+
+  useEffect(() => setSelectedSegmentId(null), [period, selectedDay.id]);
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
@@ -322,7 +345,26 @@ export function TimelineScreen({ days, selectedDay, locationSegments = [], known
         </ScrollView>
       ) : null}
 
-      {period === 'day' ? <DayView day={selectedDay} segments={selectedSegments} knownPlaceClustering={knownPlaceClustering} onOpenEvent={onOpenEvent} /> : null}
+      <DayRouteMap
+        day={selectedDay}
+        period={period}
+        showsLiveLocation={isLiveTimelinePeriod(period, selectedDay.id)}
+        segments={visibleSegments}
+        knownPlaceClustering={knownPlaceClustering}
+        selectedSegmentId={selectedSegmentId}
+        onSelectSegment={setSelectedSegmentId}
+      />
+
+      {period === 'day' ? (
+        <DayView
+          day={selectedDay}
+          segments={selectedSegments}
+          knownPlaceClustering={knownPlaceClustering}
+          selectedSegmentId={selectedSegmentId}
+          onSelectSegment={setSelectedSegmentId}
+          onOpenEvent={onOpenEvent}
+        />
+      ) : null}
       {period === 'week' ? <WeekView days={days} selectedDay={selectedDay} onSelectDay={onSelectDay} onSwitchToDay={() => setPeriod('day')} /> : null}
       {period === 'month' ? <MonthView days={days} selectedDay={selectedDay} /> : null}
     </ScrollView>
@@ -375,10 +417,6 @@ function aggregateCategories(usages: DesktopUsageSummary[]) {
 function parseDayId(dayId: string) {
   const [year, month, day] = dayId.split('-').map(Number);
   return new Date(year, month - 1, day, 12);
-}
-
-function localDateId(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function formatDateRange(start: Date, end: Date) {

@@ -1,3 +1,4 @@
+import * as Location from 'expo-location';
 import { AppleMaps } from 'expo-maps';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -10,7 +11,7 @@ import {
   locationSegmentTitle,
 } from '../reconstruction/locationSegmentPresentation';
 import { colours, radius, shadow } from '../theme';
-import { InteractiveRouteMap, RouteMapProps } from './InteractiveRouteMap';
+import { RouteMapProps } from './InteractiveRouteMap';
 
 type MapFilter = 'all' | LocationSegmentKind;
 
@@ -25,18 +26,24 @@ const placeColours = ['#6B6789', colours.moss, colours.coral, '#A45E42', colours
 
 export function DayRouteMap({
   day,
+  period,
+  showsLiveLocation,
   segments,
   knownPlaceClustering,
   selectedSegmentId,
   onSelectSegment,
 }: RouteMapProps) {
   const [filter, setFilter] = useState<MapFilter>('all');
+  const [locationEnabled, setLocationEnabled] = useState(false);
+  const [liveCamera, setLiveCamera] = useState<NonNullable<AppleMaps.MapProps['cameraPosition']>>();
   const mapRef = useRef<AppleMaps.MapView>(null);
-  const camera = useMemo(
+  const routeCamera = useMemo(
     () => cameraForLocationSegments(segments, selectedSegmentId),
     [segments, selectedSegmentId],
   );
-  const overviewCamera = useMemo(() => cameraForLocationSegments(segments), [segments]);
+  const routeOverviewCamera = useMemo(() => cameraForLocationSegments(segments), [segments]);
+  const camera = routeCamera ?? (showsLiveLocation ? liveCamera : undefined);
+  const overviewCamera = routeOverviewCamera ?? (showsLiveLocation ? liveCamera : undefined);
   const visibleSegments = filter === 'all'
     ? segments
     : segments.filter((segment) => segment.kind === filter);
@@ -97,23 +104,48 @@ export function DayRouteMap({
 
   useEffect(() => {
     setFilter('all');
-  }, [day.id]);
+  }, [day.id, period]);
 
   useEffect(() => {
     if (camera) mapRef.current?.setCameraPosition(camera);
   }, [camera]);
 
-  if (!camera) {
-    return (
-      <InteractiveRouteMap
-        day={day}
-        segments={segments}
-        knownPlaceClustering={knownPlaceClustering}
-        selectedSegmentId={selectedSegmentId}
-        onSelectSegment={onSelectSegment}
-      />
-    );
-  }
+  useEffect(() => {
+    let mounted = true;
+    if (!showsLiveLocation) {
+      setLocationEnabled(false);
+      setLiveCamera(undefined);
+      return () => {
+        mounted = false;
+      };
+    }
+    async function locateMap() {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!mounted) return;
+        setLocationEnabled(permission.granted);
+        if (!permission.granted || routeOverviewCamera) return;
+        const location = await Location.getLastKnownPositionAsync({
+          maxAge: 15 * 60 * 1000,
+          requiredAccuracy: 1_000,
+        }) ?? await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (!mounted) return;
+        setLiveCamera({
+          coordinates: {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          },
+          zoom: 16,
+        });
+      } catch {
+        // The native map remains usable even when a one-time camera fix is unavailable.
+      }
+    }
+    void locateMap();
+    return () => {
+      mounted = false;
+    };
+  }, [day.id, period, routeOverviewCamera, showsLiveLocation]);
 
   const selectSegment = (segmentId: string | undefined) => {
     if (!segmentId) return;
@@ -130,14 +162,14 @@ export function DayRouteMap({
           markers={markers}
           polylines={polylines}
           properties={{
-            isMyLocationEnabled: origin === 'real' || origin === 'mixed',
+            isMyLocationEnabled: showsLiveLocation && locationEnabled,
             mapType: AppleMaps.MapType.STANDARD,
             selectionEnabled: true,
             polylineTapThreshold: 28,
           }}
           uiSettings={{
             compassEnabled: true,
-            myLocationButtonEnabled: origin === 'real' || origin === 'mixed',
+            myLocationButtonEnabled: showsLiveLocation && locationEnabled,
             scaleBarEnabled: true,
             togglePitchEnabled: false,
           }}
@@ -155,11 +187,11 @@ export function DayRouteMap({
             <Text style={styles.mapMetricLabel}>meaningful stops</Text>
           </View>
         </View>
-        <View style={[styles.mapOrigin, origin === 'real' && styles.mapOriginReal]}>
-          <Text style={styles.mapOriginText}>{origin.toUpperCase()} · APPLE MAPS</Text>
+        <View style={[styles.mapOrigin, (origin === 'real' || (showsLiveLocation && locationEnabled)) && styles.mapOriginReal]}>
+          <Text style={styles.mapOriginText}>{segments.length > 0 ? origin.toUpperCase() : showsLiveLocation && locationEnabled ? 'LIVE' : 'NO ROUTE YET'} · APPLE MAPS</Text>
         </View>
         <View style={styles.mapHint}>
-          <Text style={styles.mapHintText}>Tap a street or business label for Apple Maps details</Text>
+          <Text style={styles.mapHintText}>{segments.length > 0 ? 'Tap a street or business label for Apple Maps details' : `Map ready · no ${period} route samples yet`}</Text>
         </View>
       </View>
 
@@ -191,14 +223,14 @@ export function DayRouteMap({
       <View style={styles.controlRow}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Fit the full reconstructed day on the map"
+          accessibilityLabel={`Fit the full reconstructed ${period} on the map`}
           onPress={() => {
             onSelectSegment(null);
             if (overviewCamera) mapRef.current?.setCameraPosition(overviewCamera);
           }}
           style={styles.fitButton}
         >
-          <Text style={styles.fitButtonText}>Fit full day</Text>
+          <Text style={styles.fitButtonText}>Fit full {period}</Text>
         </Pressable>
         <Text style={styles.nativeGestureHint}>Pinch, drag and rotate normally</Text>
       </View>

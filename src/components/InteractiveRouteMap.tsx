@@ -19,6 +19,7 @@ import {
   locationSegmentDetail,
   locationSegmentTitle,
 } from '../reconstruction/locationSegmentPresentation';
+import { TimelinePeriod } from '../reconstruction/timelinePeriod';
 import { colours, radius, shadow } from '../theme';
 
 type MapFilter = 'all' | LocationSegmentKind;
@@ -36,6 +37,8 @@ const filters: Array<{ id: MapFilter; label: string }> = [
 
 export interface RouteMapProps {
   day: DayRecord;
+  period: TimelinePeriod;
+  showsLiveLocation: boolean;
   segments: LocationSegmentRecord[];
   knownPlaceClustering: KnownPlaceClusteringResult;
   selectedSegmentId: string | null;
@@ -44,6 +47,7 @@ export interface RouteMapProps {
 
 export function InteractiveRouteMap({
   day,
+  period,
   segments,
   knownPlaceClustering,
   selectedSegmentId,
@@ -53,7 +57,7 @@ export function InteractiveRouteMap({
   const [viewport, setViewport] = useState(overviewViewport);
   const projected = useMemo(() => projectLocationSegments(segments, MAP_WIDTH, MAP_HEIGHT, 48), [segments]);
   const hasReconstruction = projected.length > 0;
-  const hasNoLocationEvidence = !hasReconstruction && day.places.length === 0;
+  const hasFixtureEvidence = !hasReconstruction && (day.places.length > 0 || day.routePath.length > 0);
   const assignmentBySegment = useMemo(
     () => new Map(knownPlaceClustering.assignments.map((assignment) => [assignment.segmentId, assignment.placeId])),
     [knownPlaceClustering.assignments],
@@ -84,7 +88,7 @@ export function InteractiveRouteMap({
   useEffect(() => {
     setFilter('all');
     setViewport(overviewViewport);
-  }, [day.id]);
+  }, [day.id, period]);
 
   useEffect(() => {
     if (selectedProjected) setViewport(focusViewportOnSegment(selectedProjected));
@@ -93,18 +97,6 @@ export function InteractiveRouteMap({
   const selectSegment = (segmentId: string) => {
     onSelectSegment(segmentId === selectedSegmentId ? null : segmentId);
   };
-
-  if (hasNoLocationEvidence) {
-    const desktopOnly = isDesktopOnlyDay(day);
-    return (
-      <View style={styles.noLocationCard}>
-        <View style={styles.noLocationIcon}><Text style={styles.noLocationIconText}>D</Text></View>
-        <Text style={styles.noLocationEyebrow}>{desktopOnly ? 'DESKTOP DAY IS LIVE' : 'SOURCE NOT CONNECTED'}</Text>
-        <Text style={styles.noLocationTitle}>Location isn’t connected here.</Text>
-        <Text style={styles.noLocationBody}>{desktopOnly ? 'ATIRA can still reconstruct computer activity while the phone’s place and movement layers remain absent.' : 'This day has no location evidence. ATIRA will not draw a route or report zero travel without a connected phone collector.'}</Text>
-      </View>
-    );
-  }
 
   return (
     <View>
@@ -133,8 +125,8 @@ export function InteractiveRouteMap({
             );
           }) : (
             <>
-              <Path d={day.routePath} stroke={colours.blue} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-              {day.inferredRoutePath ? <Path d={day.inferredRoutePath} stroke={colours.amber} strokeWidth="7" strokeLinecap="round" strokeDasharray="8 7" fill="none" /> : null}
+              {hasFixtureEvidence ? <Path d={day.routePath} stroke={colours.blue} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" fill="none" /> : null}
+              {hasFixtureEvidence && day.inferredRoutePath ? <Path d={day.inferredRoutePath} stroke={colours.amber} strokeWidth="7" strokeLinecap="round" strokeDasharray="8 7" fill="none" /> : null}
             </>
           )}
           {hasReconstruction ? visibleProjected.filter((item) => item.segment.kind === 'stay' && item.center).map((item) => {
@@ -153,9 +145,9 @@ export function InteractiveRouteMap({
                 opacity={selectedSegmentId && !selected ? 0.4 : 1}
               />
             );
-          }) : day.places.map((place) => (
+          }) : hasFixtureEvidence ? day.places.map((place) => (
             <Circle key={place.id} cx={place.x} cy={place.y} r="9" fill={placeColour[place.kind]} stroke={colours.white} strokeWidth="4" />
-          ))}
+          )) : null}
         </Svg>
         {hasReconstruction ? visibleProjected.map((item) => {
           const target = mapHitTarget(item.center ?? item.points[Math.floor(item.points.length / 2)], box);
@@ -172,14 +164,14 @@ export function InteractiveRouteMap({
           );
         }) : null}
         <View style={styles.mapTopRow}>
-          <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? formatDistance(reconstructedDistance) : day.distance}</Text><Text style={styles.mapMetricLabel}>travelled</Text></View>
-          <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? stopCount : Math.max(0, day.places.length - 1)}</Text><Text style={styles.mapMetricLabel}>meaningful stops</Text></View>
+          <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? formatDistance(reconstructedDistance) : hasFixtureEvidence ? day.distance : '0 m'}</Text><Text style={styles.mapMetricLabel}>travelled</Text></View>
+          <View style={styles.mapMetric}><Text style={styles.mapMetricValue}>{hasReconstruction ? stopCount : hasFixtureEvidence ? Math.max(0, day.places.length - 1) : 0}</Text><Text style={styles.mapMetricLabel}>meaningful stops</Text></View>
         </View>
         <View style={styles.mapLegend}>
-          <View style={styles.legendItem}><View style={[styles.legendLine, { backgroundColor: colours.blue }]} /><Text style={styles.legendText}>{hasReconstruction ? 'Measured path' : 'Illustrative demo'}</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendLine, { backgroundColor: colours.blue }]} /><Text style={styles.legendText}>{hasReconstruction ? 'Measured path' : hasFixtureEvidence ? 'Illustrative demo' : `No ${period} route samples yet`}</Text></View>
           {(hasReconstruction ? segments.some((segment) => segment.kind === 'coverage_gap') : day.inferredRoutePath) ? <View style={styles.legendItem}><View style={styles.legendDash} /><Text style={styles.legendText}>Coverage gap</Text></View> : null}
         </View>
-        <View style={[styles.mapOrigin, origin === 'real' && styles.mapOriginReal]}><Text style={styles.mapOriginText}>{hasReconstruction ? `${origin.toUpperCase()} RECONSTRUCTION` : 'FIXTURE MAP'}</Text></View>
+        <View style={[styles.mapOrigin, origin === 'real' && styles.mapOriginReal]}><Text style={styles.mapOriginText}>{hasReconstruction ? `${origin.toUpperCase()} RECONSTRUCTION` : hasFixtureEvidence ? 'FIXTURE MAP' : 'MAP READY'}</Text></View>
       </View>
 
       {hasReconstruction ? (
@@ -243,12 +235,6 @@ function segmentOrigin(segments: LocationSegmentRecord[]): ObservationOrigin | '
   return 'mixed';
 }
 
-function isDesktopOnlyDay(day: DayRecord) {
-  return Boolean(day.desktopUsages?.some((usage) => usage.totalSeconds > 0))
-    && day.places.length === 0
-    && day.events.every((event) => event.evidence.some((item) => item.source === 'desktop'));
-}
-
 function formatDistance(distanceMetres: number) {
   return distanceMetres >= 1000 ? `${(distanceMetres / 1000).toFixed(1)} km` : `${Math.round(distanceMetres)} m`;
 }
@@ -271,12 +257,6 @@ function mapHitTarget(
 const styles = StyleSheet.create({
   mapCard: { height: 300, backgroundColor: '#DCE4DC', borderRadius: radius.large, overflow: 'hidden', position: 'relative', ...shadow },
   mapHitTarget: { position: 'absolute', width: 34, height: 34, marginLeft: -17, marginTop: -17, borderRadius: 17 },
-  noLocationCard: { minHeight: 180, backgroundColor: colours.blueSoft, borderRadius: radius.large, padding: 20, justifyContent: 'center', borderWidth: 1, borderColor: '#CFD9E9', ...shadow },
-  noLocationIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: colours.blue, alignItems: 'center', justifyContent: 'center' },
-  noLocationIconText: { color: colours.white, fontSize: 15, fontWeight: '900' },
-  noLocationEyebrow: { color: colours.blue, fontSize: 8, fontWeight: '900', letterSpacing: 0.9, marginTop: 14 },
-  noLocationTitle: { color: colours.ink, fontSize: 19, fontWeight: '900', marginTop: 5 },
-  noLocationBody: { color: colours.inkSoft, fontSize: 10, lineHeight: 16, marginTop: 6, maxWidth: 330 },
   mapTopRow: { position: 'absolute', top: 13, left: 13, right: 13, flexDirection: 'row', justifyContent: 'space-between', pointerEvents: 'none' },
   mapMetric: { backgroundColor: 'rgba(255,253,248,0.94)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 },
   mapMetricValue: { color: colours.ink, fontSize: 12, fontWeight: '900' },

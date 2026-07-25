@@ -30,6 +30,7 @@ import { desktopDayResultsToRecord, reconstructDesktopActivity, withoutDesktopDe
 import { CollectorStatus, DeviceRecord, EventCorrection, LocationSegmentRecord, RawObservation, RepositoryDiagnostics, TimelineRepository } from './contracts';
 import { databaseStartupMessage } from './databaseReliability';
 import { ensureCurrentDay } from './currentDay';
+import { localDayIdForTimestamp } from './localDay';
 import { getTimelineRepository } from './timelineRepository';
 
 interface UpdateEventInput {
@@ -375,25 +376,34 @@ export function useTimelineStore() {
 }
 
 async function reconstructStoredLocationDays(repository: TimelineRepository) {
-  const [observations, existingDays] = await Promise.all([
+  const [observations, existingDays, existingSegments] = await Promise.all([
     repository.listObservations({ source: 'location' }),
     repository.listDays(),
+    repository.listLocationSegments(),
   ]);
   const existingById = new Map(existingDays.map((day) => [day.id, day]));
   const byDay = new Map<string, typeof observations>();
   for (const observation of observations) {
-    const dayId = observation.startedAt.slice(0, 10);
+    const dayId = localDayIdForTimestamp(observation.startedAt);
     const dayObservations = byDay.get(dayId) ?? [];
     dayObservations.push(observation);
     byDay.set(dayId, dayObservations);
   }
+  const affectedDayIds = new Set([
+    ...byDay.keys(),
+    ...existingSegments.map((segment) => segment.dayId),
+  ]);
   const results: LocationReconstructionResult[] = [];
-  for (const [dayId, dayObservations] of byDay) {
+  for (const dayId of [...affectedDayIds].sort()) {
+    const dayObservations = byDay.get(dayId) ?? [];
     const result = reconstructLocationDay(dayId, dayObservations);
     await repository.replaceLocationSegments(dayId, result.segments);
-    const record = locationDayResultToRecord(result, existingById.get(dayId));
-    await repository.upsertDay(record);
-    existingById.set(dayId, record);
+    const existing = existingById.get(dayId);
+    if (dayObservations.length > 0 || existing) {
+      const record = locationDayResultToRecord(result, existing);
+      await repository.upsertDay(record);
+      existingById.set(dayId, record);
+    }
     results.push(result);
   }
   return results;
